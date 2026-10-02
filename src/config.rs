@@ -13,10 +13,10 @@ pub struct Config {
 }
 
 impl Config {
-    /// `$WORKFOREST_ROOT` and `$WORKFOREST_REPOS`, defaulting to `~/forests` and `~/repos`.
+    /// `$WORKFOREST_ROOT` and `$WORKFOREST_REPOS`, defaulting to `~/.workforest` and `~/repos`.
     pub fn from_env() -> Result<Config> {
         Ok(Config {
-            forest_root: dir_from_env("WORKFOREST_ROOT", "forests")?,
+            forest_root: dir_from_env("WORKFOREST_ROOT", ".workforest")?,
             repos_root: dir_from_env("WORKFOREST_REPOS", "repos")?,
         })
     }

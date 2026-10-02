@@ -14,7 +14,7 @@ pub const VERSION: &str = match option_env!("WORKFOREST_VERSION") {
 const AFTER_HELP: &str = "\
 Repos are named relative to $WORKFOREST_REPOS (default ~/repos); an argument
 containing `/` or starting with `.` is a path. Forests live under
-$WORKFOREST_ROOT (default ~/forests).
+$WORKFOREST_ROOT (default ~/.workforest).
 
 Examples:
   workforest new fix-login api              single-repo forest on branch fix-login

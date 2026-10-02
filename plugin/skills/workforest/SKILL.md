@@ -1,11 +1,11 @@
 ---
 name: workforest
-description: Manage "workforests" — collections of git worktrees under ~/forests, one per repo involved in a piece of work, so a feature is developed in isolation without ever touching the repos' main checkouts. Use whenever isolation is wanted, INCLUDING single-repo work — a forest with one tree is normal and expected. Use when a task spans two or more repos, when a feature should not disturb the main checkout, when several sessions or agents may work in parallel, when starting/switching/cleaning up a feature branch, or when the user says forest, graft, prune, burn, worktree, isolate, or asks to work on several repos at once.
+description: Manage "workforests" — collections of git worktrees under ~/.workforest, one per repo involved in a piece of work, so a feature is developed in isolation without ever touching the repos' main checkouts. Use whenever isolation is wanted, INCLUDING single-repo work — a forest with one tree is normal and expected. Use when a task spans two or more repos, when a feature should not disturb the main checkout, when several sessions or agents may work in parallel, when starting/switching/cleaning up a feature branch, or when the user says forest, graft, prune, burn, worktree, isolate, or asks to work on several repos at once.
 ---
 
 # workforest
 
-A **forest** is a directory under `~/forests/` holding one git worktree ("tree")
+A **forest** is a directory under `~/.workforest/` holding one git worktree ("tree")
 per repo involved in a piece of work. Each tree is a worktree of the repo's main
 checkout in `~/repos/<name>`, checked out on a shared branch named after the
 forest. The main checkouts are never modified — no branch switching, no
@@ -16,7 +16,7 @@ perfectly normal forest. Isolation is the point; spanning repos is just
 something forests also happen to do.
 
 ```
-~/forests/auth-migration/
+~/.workforest/auth-migration/
 ├── .workforest     manifest: repo \t source repo \t branch \t base ref
 ├── api/            worktree of ~/repos/api on branch auth-migration
 └── web/            worktree of ~/repos/web on branch auth-migration
@@ -114,8 +114,8 @@ Options:
 Repo arguments are names relative to `~/repos`; anything containing `/` or
 starting with `.` is treated as a path, so repos elsewhere can be grafted too.
 
-Environment: `WORKFOREST_ROOT` (default `~/forests`) and `WORKFOREST_REPOS`
-(default `~/repos`). Where this skill says `~/forests` or `~/repos`, read those
+Environment: `WORKFOREST_ROOT` (default `~/.workforest`) and `WORKFOREST_REPOS`
+(default `~/repos`). Where this skill says `~/.workforest` or `~/repos`, read those
 values if they are set.
 
 ## Typical flow

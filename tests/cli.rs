@@ -192,6 +192,27 @@ fn grafting_copies_no_history() {
 }
 
 #[test]
+fn forests_live_in_dot_workforest_by_default() {
+    let sb = Sandbox::new();
+    sb.repo("api");
+
+    let output = sb
+        .isolate(&mut Command::new(env!("CARGO_BIN_EXE_workforest")))
+        .env_remove("WORKFOREST_ROOT")
+        .current_dir(&sb.root)
+        .args(["new", "hidden", "api"])
+        .output()
+        .expect("run workforest");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(sb.root.join("home/.workforest/hidden/api").is_dir());
+}
+
+#[test]
 fn forest_names_must_be_single_visible_path_components() {
     let sb = Sandbox::new();
     for name in ["", ".", "..", ".hidden", "a/b"] {

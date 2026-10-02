@@ -6,7 +6,7 @@ one branch named after the forest. The repos' main checkouts are never touched,
 so several pieces of work, or several coding agents, can be in flight at once.
 
 ```sh
-workforest new auth-migration api web     # ~/forests/auth-migration/{api,web}, on branch auth-migration
+workforest new auth-migration api web     # ~/.workforest/auth-migration/{api,web}, on branch auth-migration
 cd "$(workforest path auth-migration)"
 workforest status                         # what's dirty, what's ahead of its base
 workforest exec -- git push -u origin HEAD
@@ -95,7 +95,7 @@ pass `--force`. Run `workforest help <command>` for the details.
 
 Repos are named relative to `$WORKFOREST_REPOS` (default `~/repos`); an
 argument containing `/` or starting with `.` is a path. Forests live under
-`$WORKFOREST_ROOT` (default `~/forests`).
+`$WORKFOREST_ROOT` (default `~/.workforest`).
 
 ## Development
 
