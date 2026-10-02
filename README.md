@@ -9,7 +9,6 @@ so several pieces of work, or several coding agents, can be in flight at once.
 workforest new auth-migration ~/code/api ~/code/web   # both trees on branch auth-migration
 cd "$(workforest path auth-migration)"
 workforest status                                     # what's dirty, what's ahead of its base
-workforest exec -- git push -u origin HEAD
 workforest burn auth-migration                        # refuses while any work would be lost
 ```
 
@@ -85,7 +84,6 @@ For other agents, put the skill wherever they read skills from.
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
 | `workforest path [forest]` | print a forest's path |
-| `workforest exec [--] <cmd>...` | run a command in every tree, one tree at a time |
 
 `wf` is short for `workforest`: the Nix package installs it as a symlink. With
 cargo, add it yourself: `ln -s workforest ~/.cargo/bin/wf`.

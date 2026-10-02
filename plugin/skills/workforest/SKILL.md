@@ -91,10 +91,9 @@ forest you're standing in.
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
 | `workforest path [forest]` | print a forest's path |
-| `workforest exec [--] <cmd>...` | run a command in every tree, one tree at a time |
 
 Aliases: `plant`=`new`, `add`=`graft`, `remove`=`prune`, `rm`/`delete`=`burn`,
-`list`=`ls`, `st`=`status`, `dir`=`path`, `each`=`exec`.
+`list`=`ls`, `st`=`status`, `dir`=`path`.
 
 `wf` is a short name for `workforest` itself, which the Nix package installs.
 Users may type either; in commands you run, use `workforest`, which every
@@ -102,7 +101,7 @@ install provides.
 
 Options:
 
-- `-f, --forest <name>` (`graft`, `prune`, `exec`) — target forest. Defaults to
+- `-f, --forest <name>` (`graft`, `prune`) — target forest. Defaults to
   the forest containing the current directory, so inside a tree you can omit
   it. `status`, `path` and `burn` take the forest as an optional argument with the
   same default.
@@ -141,7 +140,6 @@ cd "$(workforest path auth-migration)"
 # ...edit across api/ and web/...
 workforest graft ~/code/docs                  # a third repo turned out to be involved
 workforest status                             # what's dirty, what's ahead
-workforest exec -- git push -u origin HEAD    # push every tree
 workforest burn auth-migration --delete-branches
 ```
 
@@ -196,9 +194,9 @@ expected; show the step 3 diff and ask before using `--force`.
 - Work from a tree directory for single-repo changes; work from the forest root
   when the change spans repos — relative paths like `api/src/...` then resolve
   naturally, and each subdirectory is a normal repo.
-- `workforest exec` is the right tool for cross-repo sweeps (`git status`,
-  running each repo's tests, pushing). It runs one tree at a time and returns
-  the last non-zero exit code.
+- For a sweep across every tree (status, each repo's tests, pushing), loop
+  over the forest's directories, e.g.
+  `for t in "$(workforest path <forest>)"/*/; do git -C "$t" push -u origin HEAD; done`.
 - Deleting a forest leaves the branches alone unless `--delete-branches` is
   passed, so a burned forest can be replanted on the same branch names.
 - The manifest is plain TSV. If a tree gets out of sync (deleted by hand, say),

@@ -1,7 +1,5 @@
 //! The command-line interface.
 
-use std::ffi::OsString;
-
 use clap::{Args, Parser, Subcommand};
 
 /// The version `--version` reports. A Nix build passes the version with its
@@ -20,7 +18,6 @@ Examples:
   workforest new auth-migration ~/code/api ~/code/web
   cd \"$(workforest path auth-migration)\"
   workforest graft ~/code/docs -B origin/release   a third tree, off another base
-  workforest exec -- git push -u origin HEAD
   workforest burn auth-migration --delete-branches";
 
 /// One git worktree per repo in a piece of work, isolated from the main
@@ -56,9 +53,6 @@ pub enum Command {
     /// Print a forest's path
     #[command(visible_alias = "dir")]
     Path(ForestArg),
-    /// Run a command in every tree of a forest, one tree at a time
-    #[command(visible_alias = "each")]
-    Exec(ExecArgs),
 }
 
 #[derive(Args)]
@@ -111,20 +105,6 @@ pub struct LsArgs {
 pub struct ForestArg {
     /// Forest to act on [default: the forest containing the current directory]
     pub forest: Option<String>,
-}
-
-#[derive(Args)]
-pub struct ExecArgs {
-    #[command(flatten)]
-    pub target: Target,
-    /// Command to run, with its arguments
-    #[arg(
-        required = true,
-        trailing_var_arg = true,
-        allow_hyphen_values = true,
-        value_name = "COMMAND"
-    )]
-    pub command: Vec<OsString>,
 }
 
 /// Which forest a command acts on.

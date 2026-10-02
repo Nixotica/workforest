@@ -14,7 +14,7 @@ use clap::Parser;
 
 fn main() -> ExitCode {
     match commands::run(cli::Cli::parse()) {
-        Ok(code) => ExitCode::from(code),
+        Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("workforest: {err}");
             ExitCode::FAILURE

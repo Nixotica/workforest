@@ -1,16 +1,12 @@
 //! What each subcommand does.
 
 use std::fs;
-use std::io::{self, Write};
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process;
 
 use clap::CommandFactory;
 
 use crate::cli::{
-    Branching, BurnArgs, Cli, Command, ExecArgs, ForestArg, GraftArgs, LsArgs, NewArgs, PruneArgs,
-    Removal,
+    Branching, BurnArgs, Cli, Command, ForestArg, GraftArgs, LsArgs, NewArgs, PruneArgs, Removal,
 };
 use crate::config::Config;
 use crate::error::{Context, Result, bail};
@@ -22,13 +18,13 @@ const NAME_WITH_FLAG: &str = "pass -f <forest>";
 /// How to name a forest to commands that take it as an argument.
 const NAME_AS_ARGUMENT: &str = "pass the forest's name";
 
-/// Run a parsed command line, returning the process exit code.
-pub fn run(cli: Cli) -> Result<u8> {
+/// Run a parsed command line.
+pub fn run(cli: Cli) -> Result<()> {
     let Some(command) = cli.command else {
         Cli::command()
             .print_help()
             .context("could not print help")?;
-        return Ok(0);
+        return Ok(());
     };
     match command {
         Command::New(args) => new(&Config::from_env()?, args)?,
@@ -38,9 +34,8 @@ pub fn run(cli: Cli) -> Result<u8> {
         Command::Ls(args) => ls(&Config::from_env()?, args)?,
         Command::Status(args) => status(&Config::from_env()?, args)?,
         Command::Path(args) => path(&Config::from_env()?, args)?,
-        Command::Exec(args) => return exec(&Config::from_env()?, args),
     }
-    Ok(0)
+    Ok(())
 }
 
 fn new(config: &Config, args: NewArgs) -> Result<()> {
@@ -238,51 +233,6 @@ fn path(config: &Config, args: ForestArg) -> Result<()> {
     let forest = Forest::resolve(config, args.forest.as_deref(), NAME_AS_ARGUMENT)?;
     println!("{}", forest.dir.display());
     Ok(())
-}
-
-/// Run the command in each tree in turn. Returns the exit code of the last
-/// tree whose command failed, or 0 when none did.
-fn exec(config: &Config, args: ExecArgs) -> Result<u8> {
-    let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
-    let Some((program, program_args)) = args.command.split_first() else {
-        bail!("no command given");
-    };
-    let mut code = 0;
-    for tree in forest.trees()? {
-        let dir = forest.tree_dir(&tree.repo);
-        if !dir.is_dir() {
-            continue;
-        }
-        println!("\n=== {} ===", tree.repo);
-        io::stdout().flush().context("could not write to stdout")?;
-        match process::Command::new(program)
-            .args(program_args)
-            .current_dir(&dir)
-            .status()
-        {
-            Ok(status) if status.success() => {}
-            Ok(status) => code = failure_code(status),
-            Err(err) => {
-                eprintln!(
-                    "workforest: could not run {}: {err}",
-                    program.to_string_lossy()
-                );
-                code = 127;
-            }
-        }
-    }
-    Ok(code)
-}
-
-/// A failed command's exit code as a shell reports it: its own code, or 128
-/// plus the signal that killed it.
-fn failure_code(status: process::ExitStatus) -> u8 {
-    status
-        .code()
-        .or_else(|| status.signal().map(|signal| 128 + signal))
-        .and_then(|code| u8::try_from(code).ok())
-        .filter(|&code| code != 0)
-        .unwrap_or(1)
 }
 
 fn count_or_unknown(dir: &Path, range: &str) -> String {

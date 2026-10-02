@@ -379,31 +379,6 @@ fn path_finds_the_forest_from_nested_and_symlinked_directories() {
 }
 
 #[test]
-fn exec_runs_in_every_tree_and_returns_the_last_failure() {
-    let sb = Sandbox::new();
-    sb.repo("api");
-    sb.repo("web");
-    sb.ok(&sb.root, &["new", "ex", "repos/api", "repos/web"]);
-    let forest = sb.forest("ex");
-
-    let out = sb.ok(
-        &forest,
-        &["exec", "git", "rev-parse", "--abbrev-ref", "HEAD"],
-    );
-    assert_eq!(out, "\n=== api ===\nex\n\n=== web ===\nex\n");
-
-    fs::write(forest.join("api").join("fail"), "").unwrap();
-    let script = "test ! -e fail || exit 3";
-    let output = sb.workforest(&sb.root, &["each", "-f", "ex", "--", "sh", "-c", script]);
-    assert_eq!(output.status.code(), Some(3));
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("=== web ==="),
-        "keeps going after a failure: {stdout}"
-    );
-}
-
-#[test]
 fn prune_refuses_to_lose_work_unless_forced() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
