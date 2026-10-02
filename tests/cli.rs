@@ -4,7 +4,7 @@
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
@@ -468,6 +468,68 @@ fn rm_force_discards_work_and_can_delete_branches() {
 
     assert!(!sb.forest("doomed").exists());
     assert_eq!(sb.git(&api, &["branch", "--list", "doomed"]), "");
+}
+
+#[test]
+fn rm_refuses_to_delete_a_checkout_the_manifest_does_not_record() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    sb.ok(&sb.root, &["new", "stray"]);
+    let checkout = sb.forest("stray").join("api");
+    sb.git(
+        &api,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "by-hand",
+            path(&checkout),
+        ],
+    );
+
+    let refusal = sb.fails(&sb.root, &["rm", "stray"]);
+    assert!(
+        refusal.contains("  api: a checkout the manifest doesn't record"),
+        "{refusal}"
+    );
+    assert!(checkout.is_dir(), "a refusal removes nothing");
+
+    sb.ok(&sb.root, &["rm", "stray", "--force"]);
+    assert!(!sb.forest("stray").exists());
+}
+
+#[test]
+fn concurrent_grafts_into_one_forest_are_all_recorded() {
+    let sb = Sandbox::new();
+    let repos: Vec<String> = (0..24).map(|i| format!("repo{i}")).collect();
+    for repo in &repos {
+        sb.repo(repo);
+    }
+    sb.ok(&sb.root, &["new", "busy"]);
+
+    let grafts: Vec<_> = repos
+        .iter()
+        .map(|repo| {
+            sb.isolate(&mut Command::new(env!("CARGO_BIN_EXE_workforest")))
+                .current_dir(&sb.root)
+                .args(["graft", "-f", "busy", repo])
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("start a graft")
+        })
+        .collect();
+    for mut graft in grafts {
+        assert!(graft.wait().expect("wait for a graft").success());
+    }
+
+    let trees = sb.ok(&sb.root, &["ls", "busy"]);
+    for repo in &repos {
+        assert!(
+            trees.contains(&format!("  {repo} ")),
+            "{repo} is missing:\n{trees}"
+        );
+    }
 }
 
 #[test]

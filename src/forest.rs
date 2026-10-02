@@ -13,6 +13,7 @@ use crate::config::Config;
 use crate::error::{Context, Result, bail};
 
 const MANIFEST: &str = ".workforest";
+const LOCK: &str = ".workforest.lock";
 
 /// A forest: a directory under the forest root holding one tree per repo.
 pub struct Forest {
@@ -60,11 +61,16 @@ impl Forest {
     /// Create a new forest with no trees.
     pub fn plant(config: &Config, name: &str) -> Result<Forest> {
         validate_name(name)?;
-        let dir = config.forest_root.join(name);
-        if dir.symlink_metadata().is_ok() {
-            bail!("forest already exists: {}", dir.display());
+        let root = &config.forest_root;
+        fs::create_dir_all(root).context(format!("could not create {}", root.display()))?;
+        let dir = root.join(name);
+        match fs::create_dir(&dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                bail!("forest already exists: {}", dir.display())
+            }
+            Err(err) => bail!("could not create {}: {err}", dir.display()),
         }
-        fs::create_dir_all(&dir).context(format!("could not create {}", dir.display()))?;
         let forest = Forest {
             name: name.to_owned(),
             dir,
@@ -158,16 +164,49 @@ impl Forest {
 
     /// Record `tree`, replacing any earlier row for the same repo.
     pub fn record(&self, tree: Tree) -> Result<()> {
-        let mut trees = self.trees()?;
-        trees.retain(|existing| existing.repo != tree.repo);
-        trees.push(tree);
-        self.write_trees(trees)
+        self.update(|trees| {
+            trees.retain(|existing| existing.repo != tree.repo);
+            trees.push(tree);
+        })
     }
 
     /// Drop the row for `repo`.
     pub fn forget(&self, repo: &str) -> Result<()> {
+        self.update(|trees| trees.retain(|tree| tree.repo != repo))
+    }
+
+    /// Directories in the forest holding a git checkout that the manifest
+    /// doesn't record, such as a tree whose graft died before it was recorded.
+    pub fn unrecorded_checkouts(&self, trees: &[Tree]) -> Result<Vec<String>> {
+        let entries =
+            fs::read_dir(&self.dir).context(format!("could not read {}", self.dir.display()))?;
+        let mut names = Vec::new();
+        for entry in entries {
+            let entry = entry.context(format!("could not read {}", self.dir.display()))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_checkout = entry.path().join(".git").symlink_metadata().is_ok();
+            if is_checkout && !trees.iter().any(|tree| tree.repo == name) {
+                names.push(name);
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    /// Change the manifest while holding the forest's lock, so that processes
+    /// grafting into the same forest at once can't drop each other's rows.
+    fn update(&self, change: impl FnOnce(&mut Vec<Tree>)) -> Result<()> {
+        let path = self.dir.join(LOCK);
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .context(format!("could not open {}", path.display()))?;
+        lock.lock()
+            .context(format!("could not lock {}", path.display()))?;
         let mut trees = self.trees()?;
-        trees.retain(|tree| tree.repo != repo);
+        change(&mut trees);
         self.write_trees(trees)
     }
 

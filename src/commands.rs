@@ -119,13 +119,19 @@ fn rm(config: &Config, args: RmArgs) -> Result<()> {
     }
     let trees = forest.trees()?;
     if !args.removal.force {
-        let risks: Vec<String> = trees
+        let mut risks: Vec<String> = trees
             .iter()
             .filter_map(|tree| {
                 git::unlanded_work(&forest.tree_dir(&tree.repo), &tree.base)
                     .map(|risk| format!("  {}: {risk}", tree.repo))
             })
             .collect();
+        risks.extend(
+            forest
+                .unrecorded_checkouts(&trees)?
+                .into_iter()
+                .map(|name| format!("  {name}: a checkout the manifest doesn't record")),
+        );
         if !risks.is_empty() {
             bail!(
                 "refusing to burn {} — work would be lost:\n{}\nre-run with --force to delete anyway",
