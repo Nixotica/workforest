@@ -1,0 +1,17 @@
+{
+  "description": "Warn at session start when the workforest CLI is missing or too old, and have Claude offer to install it",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/check-cli.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
