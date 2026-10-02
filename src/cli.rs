@@ -1,0 +1,176 @@
+//! The command-line interface.
+
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+use clap::{Args, Parser, Subcommand};
+
+/// The version `--version` reports. A Nix build passes the version with its
+/// commit in `WORKFOREST_VERSION`; any other build reports the crate version.
+pub const VERSION: &str = match option_env!("WORKFOREST_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
+const AFTER_HELP: &str = "\
+Repos are named relative to $WORKFOREST_REPOS (default ~/repos); an argument
+containing `/` or starting with `.` is a path. Forests live under
+$WORKFOREST_ROOT (default ~/forests).
+
+Examples:
+  workforest new fix-login api              single-repo forest on branch fix-login
+  workforest new auth-migration api web     two trees on branch auth-migration
+  cd \"$(workforest path auth-migration)\"
+  workforest graft docs -B origin/release   add a third tree off another base
+  workforest exec -- git push -u origin HEAD
+  workforest rm auth-migration --delete-branches";
+
+/// One git worktree per repo in a piece of work, isolated from the main
+/// checkouts. A forest with a single tree is normal; several trees share one
+/// branch name.
+#[derive(Parser)]
+#[command(name = "workforest", version = VERSION, after_help = AFTER_HELP)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+pub enum Command {
+    /// Plant a forest, optionally grafting repos into it
+    #[command(visible_alias = "plant")]
+    New(NewArgs),
+    /// Add worktrees to a forest
+    #[command(visible_alias = "add")]
+    Graft(GraftArgs),
+    /// Remove worktrees from a forest
+    #[command(visible_alias = "remove")]
+    Prune(PruneArgs),
+    /// Remove a forest and every tree in it
+    #[command(visible_aliases = ["burn", "delete"])]
+    Rm(RmArgs),
+    /// List forests, or the trees in one
+    #[command(visible_alias = "list")]
+    Ls(LsArgs),
+    /// Show each tree's branch, whether it is dirty, and how far it is from its base
+    #[command(visible_alias = "st")]
+    Status(ForestArg),
+    /// Print a forest's path
+    #[command(visible_alias = "dir")]
+    Path(ForestArg),
+    /// Run a command in every tree of a forest, one tree at a time
+    #[command(visible_alias = "each")]
+    Exec(ExecArgs),
+    /// Install the agent skill that teaches coding agents to use workforest
+    #[command(subcommand)]
+    Skill(SkillCommand),
+}
+
+#[derive(Args)]
+pub struct NewArgs {
+    /// Name of the forest, which is also the default branch name
+    pub forest: String,
+    /// Repos to graft right away
+    pub repos: Vec<String>,
+    #[command(flatten)]
+    pub branching: Branching,
+}
+
+#[derive(Args)]
+pub struct GraftArgs {
+    /// Repos to graft
+    #[arg(required = true)]
+    pub repos: Vec<String>,
+    #[command(flatten)]
+    pub target: Target,
+    #[command(flatten)]
+    pub branching: Branching,
+}
+
+#[derive(Args)]
+pub struct PruneArgs {
+    /// Repos to remove from the forest
+    #[arg(required = true)]
+    pub repos: Vec<String>,
+    #[command(flatten)]
+    pub target: Target,
+    #[command(flatten)]
+    pub removal: Removal,
+}
+
+#[derive(Args)]
+pub struct RmArgs {
+    /// Forest to remove
+    pub forest: String,
+    #[command(flatten)]
+    pub removal: Removal,
+}
+
+#[derive(Args)]
+pub struct LsArgs {
+    /// Forest whose trees to list [default: list every forest]
+    pub forest: Option<String>,
+}
+
+#[derive(Args)]
+pub struct ForestArg {
+    /// Forest to act on [default: the forest containing the current directory]
+    pub forest: Option<String>,
+}
+
+#[derive(Args)]
+pub struct ExecArgs {
+    #[command(flatten)]
+    pub target: Target,
+    /// Command to run, with its arguments
+    #[arg(
+        required = true,
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "COMMAND"
+    )]
+    pub command: Vec<OsString>,
+}
+
+/// Which forest a command acts on.
+#[derive(Args)]
+pub struct Target {
+    /// Forest to act on [default: the forest containing the current directory]
+    #[arg(short, long)]
+    pub forest: Option<String>,
+}
+
+/// Which branch a grafted tree gets.
+#[derive(Args)]
+pub struct Branching {
+    /// Branch to check out, created if it does not exist [default: the forest name]
+    #[arg(short, long)]
+    pub branch: Option<String>,
+    /// Ref to create the branch from [default: origin/HEAD, else main or master]
+    #[arg(short = 'B', long)]
+    pub base: Option<String>,
+}
+
+/// How far removing a tree may go.
+#[derive(Args)]
+pub struct Removal {
+    /// Remove trees even if that loses uncommitted changes or unpushed commits
+    #[arg(long)]
+    pub force: bool,
+    /// Also delete the trees' branches from their repos
+    #[arg(long)]
+    pub delete_branches: bool,
+}
+
+#[derive(Subcommand)]
+pub enum SkillCommand {
+    /// Write the bundled SKILL.md into a skills directory
+    Install(SkillInstallArgs),
+}
+
+#[derive(Args)]
+pub struct SkillInstallArgs {
+    /// Skills directory [default: $CLAUDE_CONFIG_DIR/skills, else ~/.claude/skills]
+    #[arg(long)]
+    pub dir: Option<PathBuf>,
+}
