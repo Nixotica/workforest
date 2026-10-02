@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  nix:
+    name: Build, test and install with Nix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Tests, clippy, rustfmt and the package build
+        run: nix flake check --print-build-logs
+
+      - name: Install into a fresh profile
+        run: nix profile install --profile "$RUNNER_TEMP/profile" .#default
+
+      - name: Smoke-test the installed binary
+        run: ci/smoke.sh "$RUNNER_TEMP/profile"
+
+  plugin:
+    name: Validate the Claude Code plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@2.1.287
+
+      - name: Validate the plugin and marketplace
+        env:
+          DISABLE_AUTOUPDATER: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: node ci/validate-plugin.mjs

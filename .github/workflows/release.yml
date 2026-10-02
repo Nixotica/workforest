@@ -1,0 +1,54 @@
+name: Release
+
+# Rolling releases: once CI passes on a commit pushed to main, the `release`
+# branch moves forward to it. The Nix flake, the Claude Code plugin and cargo
+# installs all follow `release`, so users only ever get commits that passed.
+# The first commit to pass with a new Cargo.toml version is also tagged
+# `v<version>` and gets a GitHub release.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      # Only ever a fast-forward, so a run that finishes late can't move
+      # `release` back past a newer commit that was already released.
+      - name: Move the release branch forward
+        run: |
+          if git rev-parse --verify --quiet origin/release >/dev/null &&
+            ! git merge-base --is-ancestor origin/release "$SHA"; then
+            echo "release is already ahead of $SHA"
+            exit 0
+          fi
+          git push origin "$SHA:refs/heads/release"
+
+      - name: Tag a new version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if git rev-parse --verify --quiet "refs/tags/v$version" >/dev/null; then
+            echo "v$version is already released"
+            exit 0
+          fi
+          gh release create "v$version" --target "$SHA" \
+            --title "workforest $version" --generate-notes
