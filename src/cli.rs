@@ -95,8 +95,8 @@ pub struct PruneArgs {
 
 #[derive(Args)]
 pub struct BurnArgs {
-    /// Forest to burn
-    pub forest: String,
+    /// Forest to burn [default: the forest containing the current directory]
+    pub forest: Option<String>,
     #[command(flatten)]
     pub removal: Removal,
 }

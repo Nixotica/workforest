@@ -14,7 +14,7 @@ use crate::cli::{
 };
 use crate::config::Config;
 use crate::error::{Context, Result, bail};
-use crate::forest::{Forest, Tree};
+use crate::forest::{Forest, Tree, cwd_is_within};
 use crate::git;
 
 /// How to name a forest to commands that take it with `-f`.
@@ -105,17 +105,19 @@ fn prune(config: &Config, args: PruneArgs) -> Result<()> {
         {
             bail!("{repo} has {risk}; commit/push it or re-run with --force");
         }
+        let dir = forest.tree_dir(&tree.repo);
+        let standing_in_it = cwd_is_within(&dir);
         remove_tree(&forest, &tree, &args.removal)?;
         println!("pruned {repo} from {}", forest.name);
+        if standing_in_it {
+            point_out_of(&dir, &tree.source);
+        }
     }
     Ok(())
 }
 
 fn burn(config: &Config, args: BurnArgs) -> Result<()> {
-    let forest = Forest::named(config, &args.forest)?;
-    if forest.contains_cwd() {
-        bail!("cd out of {} before burning it", forest.dir.display());
-    }
+    let forest = Forest::resolve(config, args.forest.as_deref(), NAME_AS_ARGUMENT)?;
     let trees = forest.trees()?;
     if !args.removal.force {
         let mut risks: Vec<String> = trees
@@ -139,13 +141,31 @@ fn burn(config: &Config, args: BurnArgs) -> Result<()> {
             );
         }
     }
+    let way_out = forest.contains_cwd().then(|| {
+        trees
+            .iter()
+            .find(|tree| cwd_is_within(&forest.tree_dir(&tree.repo)))
+            .map_or_else(|| config.forest_root.clone(), |tree| tree.source.clone())
+    });
     for tree in &trees {
         remove_tree(&forest, tree, &args.removal)?;
     }
     fs::remove_dir_all(&forest.dir)
         .context(format!("could not remove {}", forest.dir.display()))?;
     println!("burned forest {}", forest.name);
+    if let Some(way_out) = way_out {
+        point_out_of(&forest.dir, &way_out);
+    }
     Ok(())
+}
+
+/// Tell the user how to leave a directory that was just deleted from under them.
+fn point_out_of(gone: &Path, way_out: &Path) {
+    eprintln!(
+        "workforest: your shell is still in {}, which no longer exists; cd {}",
+        gone.display(),
+        way_out.display()
+    );
 }
 
 /// Remove one tree's worktree, and its branch if asked, then forget it.

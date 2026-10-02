@@ -7,7 +7,7 @@
 use std::env;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::error::{Context, Result, bail};
@@ -133,13 +133,7 @@ impl Forest {
 
     /// Whether the current directory is this forest's directory or inside it.
     pub fn contains_cwd(&self) -> bool {
-        let (Ok(dir), Ok(cwd)) = (
-            fs::canonicalize(&self.dir),
-            env::current_dir().and_then(fs::canonicalize),
-        ) else {
-            return false;
-        };
-        cwd.starts_with(dir)
+        cwd_is_within(&self.dir)
     }
 
     /// The trees the manifest records; a forest without a manifest has none.
@@ -219,6 +213,17 @@ impl Forest {
             .context(format!("could not write {}", staged.display()))?;
         fs::rename(&staged, &path).context(format!("could not replace {}", path.display()))
     }
+}
+
+/// Whether the current directory is `dir` or inside it.
+pub fn cwd_is_within(dir: &Path) -> bool {
+    let (Ok(dir), Ok(cwd)) = (
+        fs::canonicalize(dir),
+        env::current_dir().and_then(fs::canonicalize),
+    ) else {
+        return false;
+    };
+    cwd.starts_with(dir)
 }
 
 /// A forest name must be a single, visible path component.

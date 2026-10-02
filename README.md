@@ -81,7 +81,7 @@ For other agents, put the skill wherever they read skills from.
 | `workforest new <forest> [repo path...]` | plant a forest, optionally grafting repos right away |
 | `workforest graft <repo path>...` | add worktrees to a forest |
 | `workforest prune <tree>...` | remove worktrees from a forest, by tree name |
-| `workforest burn <forest>` | remove a forest and every tree in it (aliases: `rm`, `delete`) |
+| `workforest burn [forest]` | remove a forest and every tree in it (aliases: `rm`, `delete`) |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
 | `workforest path [forest]` | print a forest's path |

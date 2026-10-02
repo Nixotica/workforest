@@ -87,7 +87,7 @@ forest you're standing in.
 | `workforest new <forest> [repo path...]` | plant a forest, optionally grafting repos right away |
 | `workforest graft <repo path>...` | add worktrees to a forest |
 | `workforest prune <tree>...` | remove worktrees from a forest, by tree name |
-| `workforest burn <forest>` | remove a forest and every tree in it |
+| `workforest burn [forest]` | remove a forest and every tree in it |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
 | `workforest path [forest]` | print a forest's path |
@@ -104,8 +104,8 @@ Options:
 
 - `-f, --forest <name>` (`graft`, `prune`, `exec`) — target forest. Defaults to
   the forest containing the current directory, so inside a tree you can omit
-  it. `status` and `path` take the forest as an optional argument with the same
-  default.
+  it. `status`, `path` and `burn` take the forest as an optional argument with the
+  same default.
 - `-b, --branch <name>` — branch to check out or create. Defaults to the forest
   name, giving every repo the same branch name. If the branch already exists in
   a repo, it is checked out rather than recreated.
@@ -155,6 +155,10 @@ being a picture of what is really in flight.
 commits ahead of its base. That refusal means the work has not actually landed
 — say what would be lost and ask; do not reach for `--force` on the user's
 behalf.
+
+Burning the forest you're standing in works, but leaves your shell in a
+directory that no longer exists; workforest then prints where to `cd`. Prefer
+`workforest burn <forest>` from outside the forest.
 
 ### Landing a squash-merged branch
 

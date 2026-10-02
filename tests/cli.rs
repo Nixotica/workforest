@@ -464,9 +464,6 @@ fn burn_removes_a_forest_only_when_no_work_would_be_lost() {
     sb.ok(&sb.root, &["new", "blaze", "repos/api", "repos/web"]);
     let forest = sb.forest("blaze");
 
-    let inside = sb.fails(&forest.join("api"), &["burn", "blaze"]);
-    assert!(inside.contains("cd out of"), "{inside}");
-
     sb.commit(&forest.join("api"), "work.txt");
     fs::write(forest.join("web").join("scratch"), "x").unwrap();
     let refusal = sb.fails(&sb.root, &["burn", "blaze"]);
@@ -488,6 +485,45 @@ fn burn_removes_a_forest_only_when_no_work_would_be_lost() {
     assert!(
         sb.git(&api, &["branch", "--list", "blaze"])
             .contains("blaze")
+    );
+}
+
+#[test]
+fn burn_without_a_name_burns_the_forest_you_are_in() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    sb.ok(&sb.root, &["new", "here", "repos/api"]);
+    let nested = sb.forest("here").join("api").join("src");
+    fs::create_dir(&nested).unwrap();
+
+    let output = sb.workforest(&nested, &["burn"]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(!sb.forest("here").exists());
+    assert!(
+        stderr.contains(&format!("; cd {}", api.display())),
+        "{stderr}"
+    );
+    let outside = sb.fails(&sb.root, &["burn"]);
+    assert!(outside.contains("not inside a forest"), "{outside}");
+}
+
+#[test]
+fn pruning_the_tree_you_are_in_says_where_to_go() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    sb.ok(&sb.root, &["new", "leave", "repos/api"]);
+    let tree = sb.forest("leave").join("api");
+
+    let output = sb.workforest(&tree, &["prune", "api"]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(!tree.exists());
+    assert!(
+        stderr.contains(&format!("; cd {}", api.display())),
+        "{stderr}"
     );
 }
 
