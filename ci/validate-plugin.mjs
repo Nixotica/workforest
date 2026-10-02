@@ -6,6 +6,12 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
+
+// The plugin's own check reports the missing version as `version`; the
+// marketplace's check reports it as `plugins[0] plugin.json → version`.
+const isMissingPluginVersion = (file, warning) =>
+  (file.type === "plugin" && warning.path === "version") ||
+  (file.type === "marketplace" && /plugin\.json → version$/.test(warning.path));
 let failed = false;
 
 for (const target of ["plugin", "."]) {
@@ -25,7 +31,7 @@ for (const target of ["plugin", "."]) {
   const problems = files.flatMap((file) => [
     ...(file.errors ?? []).map((e) => `${file.file}: error: ${e.path}: ${e.message}`),
     ...(file.warnings ?? [])
-      .filter((w) => !(file.type === "plugin" && w.path === "version"))
+      .filter((w) => !isMissingPluginVersion(file, w))
       .map((w) => `${file.file}: warning: ${w.path}: ${w.message}`),
   ]);
   for (const problem of problems) console.error(problem);
