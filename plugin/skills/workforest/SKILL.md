@@ -1,6 +1,6 @@
 ---
 name: workforest
-description: Manage "workforests" — collections of git worktrees under ~/.workforest, one per repo involved in a piece of work, so a feature is developed in isolation without ever touching the repos' main checkouts. Use whenever isolation is wanted, INCLUDING single-repo work — a forest with one tree is normal and expected. Use when a task spans two or more repos, when a feature should not disturb the main checkout, when several sessions or agents may work in parallel, when starting/switching/cleaning up a feature branch, or when the user says forest, graft, prune, burn, worktree, isolate, or asks to work on several repos at once.
+description: Manage "workforests" — collections of git worktrees under ~/.workforest, one per repo involved in a piece of work, so a feature is developed in isolation without ever touching the repos' main checkouts. Use whenever isolation is wanted, INCLUDING single-repo work — a forest with one tree is normal and expected. Use when a task spans two or more repos, when a feature should not disturb the main checkout, when several sessions or agents may work in parallel, when starting/switching/cleaning up a feature branch, or when the user says forest, plant, cut, burn, worktree, isolate, or asks to work on several repos at once.
 ---
 
 # workforest
@@ -54,10 +54,10 @@ than this skill. Offer to update it the same way it was installed: for a Nix
 profile, `nix profile list` shows the entry to `nix profile upgrade`; for cargo,
 re-run the `cargo install` with `--force`.
 
-## When to plant a forest
+## When to start a forest
 
-Plant one — and do the work inside it — whenever any of these hold,
-**regardless of how many repos are involved**:
+Start one with `workforest new` — and do the work inside it — whenever any of
+these hold, **regardless of how many repos are involved**:
 
 - The user asked for a forest, a worktree, or isolation, by any wording.
 - The work is a named feature, fix, or experiment that wants its own branch.
@@ -67,7 +67,7 @@ Plant one — and do the work inside it — whenever any of these hold,
 
 **A single repo never disqualifies a forest.** `workforest new my-feature ~/code/myrepo`
 creates a one-tree forest and is a first-class, expected use. If the user asks
-to use workforest and the work touches one repo, plant the forest anyway — do
+to use workforest and the work touches one repo, start the forest anyway — do
 not substitute a plain branch in the main checkout, do not "simplify" to
 `git checkout -b`, and do not ask whether a forest is worth it.
 
@@ -84,15 +84,15 @@ forest you're standing in.
 
 | command | what it does |
 | --- | --- |
-| `workforest new <forest> [repo path...]` | plant a forest, optionally grafting repos right away |
-| `workforest graft <repo path>...` | add worktrees to a forest |
-| `workforest prune <tree>...` | remove worktrees from a forest, by tree name |
+| `workforest new <forest> [repo path...]` | start a forest, optionally planting trees right away |
+| `workforest plant <repo path>...` | add trees (worktrees) to a forest |
+| `workforest cut <tree>...` | remove trees from a forest, by name |
 | `workforest burn [forest]` | remove a forest and every tree in it |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
 | `workforest path [forest]` | print a forest's path |
 
-Aliases: `plant`=`new`, `add`=`graft`, `remove`=`prune`, `rm`/`delete`=`burn`,
+Aliases: `add`=`plant`, `remove`=`cut`, `rm`/`delete`=`burn`,
 `list`=`ls`, `st`=`status`, `dir`=`path`.
 
 `wf` is a short name for `workforest` itself, which the Nix package installs.
@@ -101,7 +101,7 @@ install provides.
 
 Options:
 
-- `-f, --forest <name>` (`graft`, `prune`) — target forest. Defaults to
+- `-f, --forest <name>` (`plant`, `cut`) — target forest. Defaults to
   the forest containing the current directory, so inside a tree you can omit
   it. `status`, `path` and `burn` take the forest as an optional argument with the
   same default.
@@ -110,9 +110,9 @@ Options:
   a repo, it is checked out rather than recreated.
 - `-B, --base <ref>` — what to branch off. Defaults to `origin/HEAD`, falling
   back to a local `main` or `master`.
-- `--force` — on `prune`/`burn`, skip the safety checks for uncommitted changes
+- `--force` — on `cut`/`burn`, skip the safety checks for uncommitted changes
   and unpushed commits.
-- `--delete-branches` — on `prune`/`burn`, also delete the trees' branches.
+- `--delete-branches` — on `cut`/`burn`, also delete the trees' branches.
 
 Repos are always given as paths: absolute, or relative to the current
 directory, where `.` is the repo you're in. workforest assumes nothing about
@@ -138,7 +138,7 @@ Multi-repo is the same commands with more arguments:
 workforest new auth-migration ~/code/api ~/code/web    # both on branch auth-migration
 cd "$(workforest path auth-migration)"
 # ...edit across api/ and web/...
-workforest graft ~/code/docs                  # a third repo turned out to be involved
+workforest plant ~/code/docs                  # a third repo turned out to be involved
 workforest status                             # what's dirty, what's ahead
 workforest burn auth-migration --delete-branches
 ```
@@ -160,13 +160,13 @@ directory that no longer exists; workforest then prints where to `cd`. Prefer
 
 ### Landing a squash-merged branch
 
-A squash merge is never an ancestor of the branch it came from. A freshly
-planted branch tracks its base, so once the work is squashed onto that base,
+A squash merge is never an ancestor of the branch it came from. A tree's new
+branch tracks its base, so once the work is squashed onto that base,
 `burn` still counts the branch's commits as not landed and refuses. Order the
 landing so the refusal never comes up:
 
 1. Push with `git push -u origin HEAD`, so the branch tracks its *own* remote
-   branch rather than the base it was planted from.
+   branch rather than the base it was created from.
 2. Merge without deleting the remote branch (for example
    `gh pr merge <n> --squash`, without `--delete-branch`).
 3. Fetch, and confirm the work is on the base, path by path:
@@ -181,14 +181,14 @@ expected; show the step 3 diff and ask before using `--force`.
 
 ## Guidance for Claude
 
-- Plant the forest **before** the first edit, whenever the "When to plant a
+- Start the forest **before** the first edit, whenever the "When to start a
   forest" rules above apply. Never create ad-hoc worktrees in or around a
   repo's main checkout.
 - One repo is enough. Never treat repo count as a reason to skip the forest,
   and never downgrade an explicit workforest request to a branch in the main
   checkout — the isolation, not the repo count, is what was asked for.
 - If you have already started editing in a main checkout and a forest was
-  wanted, say so and move the work: plant the forest, carry the changes over
+  wanted, say so and move the work: start the forest, carry the changes over
   (e.g. `git -C <main checkout> diff | git -C <tree> apply`), and restore the
   main checkout.
 - Work from a tree directory for single-repo changes; work from the forest root
@@ -198,7 +198,7 @@ expected; show the step 3 diff and ask before using `--force`.
   over the forest's directories, e.g.
   `for t in "$(workforest path <forest>)"/*/; do git -C "$t" push -u origin HEAD; done`.
 - Deleting a forest leaves the branches alone unless `--delete-branches` is
-  passed, so a burned forest can be replanted on the same branch names.
+  passed, so a burned forest can be started again on the same branch names.
 - The manifest is plain TSV. If a tree gets out of sync (deleted by hand, say),
-  `workforest status` shows it as `MISSING`, and `prune` cleans up the stale
+  `workforest status` shows it as `MISSING`, and `cut` cleans up the stale
   worktree registration.

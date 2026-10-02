@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "workforest",
-      "description": "Plant a forest of git worktrees for each piece of work, so features are developed in isolation from your main checkouts.",
+      "description": "Start a forest of git worktrees for each piece of work, so features are developed in isolation from your main checkouts.",
       "source": {
         "source": "git-subdir",
         "url": "Nixotica/workforest",

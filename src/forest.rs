@@ -26,7 +26,7 @@ pub struct Forest {
 pub struct Tree {
     /// The tree's directory name in the forest, which is its repo's name.
     pub repo: String,
-    /// The main worktree of the repo the tree was grafted from.
+    /// The main worktree of the repo the tree was planted from.
     pub source: PathBuf,
     pub branch: String,
     /// The ref the branch was created from, which status and the safety checks
@@ -59,7 +59,7 @@ impl Tree {
 
 impl Forest {
     /// Create a new forest with no trees.
-    pub fn plant(config: &Config, name: &str) -> Result<Forest> {
+    pub fn create(config: &Config, name: &str) -> Result<Forest> {
         validate_name(name)?;
         let root = &config.forest_root;
         fs::create_dir_all(root).context(format!("could not create {}", root.display()))?;
@@ -170,7 +170,7 @@ impl Forest {
     }
 
     /// Directories in the forest holding a git checkout that the manifest
-    /// doesn't record, such as a tree whose graft died before it was recorded.
+    /// doesn't record, such as a tree whose planting died before it was recorded.
     pub fn unrecorded_checkouts(&self, trees: &[Tree]) -> Result<Vec<String>> {
         let entries =
             fs::read_dir(&self.dir).context(format!("could not read {}", self.dir.display()))?;
@@ -188,7 +188,7 @@ impl Forest {
     }
 
     /// Change the manifest while holding the forest's lock, so that processes
-    /// grafting into the same forest at once can't drop each other's rows.
+    /// planting into the same forest at once can't drop each other's rows.
     fn update(&self, change: impl FnOnce(&mut Vec<Tree>)) -> Result<()> {
         let path = self.dir.join(LOCK);
         let lock = fs::OpenOptions::new()

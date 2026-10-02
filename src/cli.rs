@@ -17,7 +17,7 @@ Examples:
   workforest new fix-login .                       one tree: the repo you're in
   workforest new auth-migration ~/code/api ~/code/web
   cd \"$(workforest path auth-migration)\"
-  workforest graft ~/code/docs -B origin/release   a third tree, off another base
+  workforest plant ~/code/docs -B origin/release   a third tree, off another base
   workforest burn auth-migration --delete-branches";
 
 /// One git worktree per repo in a piece of work, isolated from the main
@@ -32,15 +32,14 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Plant a forest, optionally grafting repos into it
-    #[command(visible_alias = "plant")]
+    /// Create a forest, optionally planting trees in it
     New(NewArgs),
-    /// Add worktrees to a forest
+    /// Plant trees: add a worktree of each repo to a forest
     #[command(visible_alias = "add")]
-    Graft(GraftArgs),
-    /// Remove worktrees from a forest
+    Plant(PlantArgs),
+    /// Cut trees: remove their worktrees from a forest
     #[command(visible_alias = "remove")]
-    Prune(PruneArgs),
+    Cut(CutArgs),
     /// Burn a forest: remove it and every tree in it
     #[command(visible_aliases = ["rm", "delete"])]
     Burn(BurnArgs),
@@ -59,15 +58,15 @@ pub enum Command {
 pub struct NewArgs {
     /// Name of the forest, which is also the default branch name
     pub forest: String,
-    /// Paths of repos to graft right away
+    /// Paths of repos to plant right away
     pub repos: Vec<String>,
     #[command(flatten)]
     pub branching: Branching,
 }
 
 #[derive(Args)]
-pub struct GraftArgs {
-    /// Paths of repos to graft
+pub struct PlantArgs {
+    /// Paths of repos to plant
     #[arg(required = true)]
     pub repos: Vec<String>,
     #[command(flatten)]
@@ -77,10 +76,10 @@ pub struct GraftArgs {
 }
 
 #[derive(Args)]
-pub struct PruneArgs {
-    /// Repos to remove from the forest
+pub struct CutArgs {
+    /// Trees to cut, by name
     #[arg(required = true)]
-    pub repos: Vec<String>,
+    pub trees: Vec<String>,
     #[command(flatten)]
     pub target: Target,
     #[command(flatten)]
@@ -115,7 +114,7 @@ pub struct Target {
     pub forest: Option<String>,
 }
 
-/// Which branch a grafted tree gets.
+/// Which branch a planted tree gets.
 #[derive(Args)]
 pub struct Branching {
     /// Branch to check out, created if it does not exist [default: the forest name]

@@ -40,7 +40,7 @@ cargo install --locked --git https://github.com/Nixotica/workforest --branch rel
 
 ## The agent skill
 
-workforest ships a skill that teaches coding agents when to plant a forest and
+workforest ships a skill that teaches coding agents when to start a forest and
 how to work in one. The skill doesn't need the CLI installed first: when it's
 missing, the agent offers to install it.
 
@@ -77,9 +77,9 @@ For other agents, put the skill wherever they read skills from.
 
 | command | what it does |
 | --- | --- |
-| `workforest new <forest> [repo path...]` | plant a forest, optionally grafting repos right away |
-| `workforest graft <repo path>...` | add worktrees to a forest |
-| `workforest prune <tree>...` | remove worktrees from a forest, by tree name |
+| `workforest new <forest> [repo path...]` | start a forest, optionally planting trees right away |
+| `workforest plant <repo path>...` | add trees to a forest (alias: `add`) |
+| `workforest cut <tree>...` | remove trees from a forest, by name (alias: `remove`) |
 | `workforest burn [forest]` | remove a forest and every tree in it (aliases: `rm`, `delete`) |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
@@ -90,12 +90,12 @@ cargo, add it yourself: `ln -s workforest ~/.cargo/bin/wf`.
 
 Inside a forest, commands act on that forest unless told otherwise. Every tree
 gets the branch named after its forest unless you pass `--branch`, and branches
-off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `prune`
+off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `cut`
 and `burn` refuse to delete uncommitted changes or unpushed commits unless you
 pass `--force`. Run `workforest help <command>` for the details.
 
 Repos are given as paths, absolute or relative to the current directory:
-`wf new fix-login .` plants a forest for the repo you're in. workforest assumes
+`wf new fix-login .` starts a forest for the repo you're in. workforest assumes
 nothing about where your repos live, so a bare name like `api` is rejected;
 #20 tracks naming repos after a one-time setup. Forests live under
 `$WORKFOREST_ROOT` (default `~/.workforest`).

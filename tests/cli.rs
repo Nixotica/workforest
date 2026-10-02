@@ -147,11 +147,11 @@ fn new_plants_one_tree_per_repo_on_a_shared_branch() {
     let out = sb.ok(&sb.root, &["new", "feature", "repos/api", "repos/web"]);
 
     assert!(out.starts_with(&format!(
-        "planted forest feature at {}\n",
+        "new forest feature at {}\n",
         sb.forest("feature").display()
     )));
     assert!(out.contains(&format!(
-        "grafted api -> {} (branch feature, off origin/main)\n",
+        "planted api -> {} (branch feature, off origin/main)\n",
         sb.forest("feature").join("api").display()
     )));
     for repo in ["api", "web"] {
@@ -175,7 +175,7 @@ fn new_plants_one_tree_per_repo_on_a_shared_branch() {
 }
 
 #[test]
-fn grafting_copies_no_history() {
+fn planting_copies_no_history() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     let objects_before = sb.git(&api, &["count-objects", "-v"]);
@@ -226,30 +226,30 @@ fn forest_names_must_be_single_visible_path_components() {
 }
 
 #[test]
-fn graft_targets_the_forest_containing_the_current_directory() {
+fn plant_targets_the_forest_containing_the_current_directory() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     let web = sb.repo("web");
     sb.ok(&sb.root, &["new", "here"]);
     let forest = sb.forest("here");
 
-    sb.ok(&forest, &["graft", path(&api)]);
+    sb.ok(&forest, &["plant", path(&api)]);
     let nested = forest.join("api").join("src");
     fs::create_dir(&nested).unwrap();
     sb.ok(&nested, &["add", path(&web)]);
 
     assert!(forest.join("web").is_dir());
-    let outside = sb.fails(&sb.root, &["graft", path(&web)]);
+    let outside = sb.fails(&sb.root, &["plant", path(&web)]);
     assert!(
         outside.contains("not inside a forest; pass -f <forest>"),
         "{outside}"
     );
-    let again = sb.fails(&sb.root, &["graft", "-f", "here", path(&web)]);
-    assert!(again.contains("already grafted"), "{again}");
+    let again = sb.fails(&sb.root, &["plant", "-f", "here", path(&web)]);
+    assert!(again.contains("already planted"), "{again}");
 }
 
 #[test]
-fn graft_checks_out_an_existing_branch_or_creates_one_off_the_base() {
+fn plant_checks_out_an_existing_branch_or_creates_one_off_the_base() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     sb.git(&api, &["checkout", "--quiet", "-b", "topic"]);
@@ -301,15 +301,15 @@ fn repo_arguments_are_paths_never_names() {
     fs::create_dir(sb.root.join("plain")).unwrap();
 
     sb.ok(&sb.root, &["new", "paths", "./elsewhere"]);
-    sb.ok(&api, &["graft", "-f", "paths", "."]);
+    sb.ok(&api, &["plant", "-f", "paths", "."]);
 
     assert!(sb.forest("paths").join("elsewhere").is_dir());
     assert!(sb.forest("paths").join("api").is_dir());
-    let name = sb.fails(&sb.repos(), &["graft", "-f", "paths", "api"]);
+    let name = sb.fails(&sb.repos(), &["plant", "-f", "paths", "api"]);
     assert!(name.contains("api is a name, not a path"), "{name}");
-    let missing = sb.fails(&sb.root, &["graft", "-f", "paths", "./nope"]);
+    let missing = sb.fails(&sb.root, &["plant", "-f", "paths", "./nope"]);
     assert!(missing.contains("no such repo"), "{missing}");
-    let plain = sb.fails(&sb.root, &["graft", "-f", "paths", "./plain"]);
+    let plain = sb.fails(&sb.root, &["plant", "-f", "paths", "./plain"]);
     assert!(plain.contains("not a git repo"), "{plain}");
 }
 
@@ -379,7 +379,7 @@ fn path_finds_the_forest_from_nested_and_symlinked_directories() {
 }
 
 #[test]
-fn prune_refuses_to_lose_work_unless_forced() {
+fn cut_refuses_to_lose_work_unless_forced() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     sb.ok(&sb.root, &["new", "pr", "repos/api"]);
@@ -388,20 +388,20 @@ fn prune_refuses_to_lose_work_unless_forced() {
 
     fs::write(tree.join("scratch"), "x").unwrap();
     assert!(
-        sb.fails(&forest, &["prune", "api"])
+        sb.fails(&forest, &["cut", "api"])
             .contains("api has uncommitted changes")
     );
     fs::remove_file(tree.join("scratch")).unwrap();
     sb.commit(&tree, "work.txt");
-    let ahead = sb.fails(&forest, &["prune", "api"]);
+    let ahead = sb.fails(&forest, &["cut", "api"]);
     assert!(ahead.contains("api has 1 unpushed commit(s)"), "{ahead}");
 
     sb.ok(&forest, &["remove", "api", "--force", "--delete-branches"]);
     assert!(!tree.exists());
     assert_eq!(sb.git(&api, &["branch", "--list", "pr"]), "");
     assert_eq!(fs::read_to_string(forest.join(".workforest")).unwrap(), "");
-    let gone = sb.fails(&forest, &["prune", "api"]);
-    assert!(gone.contains("api is not grafted into pr"), "{gone}");
+    let gone = sb.fails(&forest, &["cut", "api"]);
+    assert!(gone.contains("api is not a tree in pr"), "{gone}");
 }
 
 #[test]
@@ -419,14 +419,14 @@ fn commits_ahead_of_a_local_base_are_not_pushed_anywhere() {
 }
 
 #[test]
-fn prune_cleans_up_a_tree_deleted_by_hand() {
+fn cut_cleans_up_a_tree_deleted_by_hand() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     sb.ok(&sb.root, &["new", "gone", "repos/api"]);
     let tree = sb.forest("gone").join("api");
     fs::remove_dir_all(&tree).unwrap();
 
-    sb.ok(&sb.root, &["prune", "-f", "gone", "api"]);
+    sb.ok(&sb.root, &["cut", "-f", "gone", "api"]);
 
     assert!(!sb.git(&api, &["worktree", "list"]).contains(path(&tree)));
 }
@@ -485,13 +485,13 @@ fn burn_without_a_name_burns_the_forest_you_are_in() {
 }
 
 #[test]
-fn pruning_the_tree_you_are_in_says_where_to_go() {
+fn cutting_the_tree_you_are_in_says_where_to_go() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     sb.ok(&sb.root, &["new", "leave", "repos/api"]);
     let tree = sb.forest("leave").join("api");
 
-    let output = sb.workforest(&tree, &["prune", "api"]);
+    let output = sb.workforest(&tree, &["cut", "api"]);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
@@ -550,7 +550,7 @@ fn burn_refuses_to_delete_a_checkout_the_manifest_does_not_record() {
 }
 
 #[test]
-fn concurrent_grafts_into_one_forest_are_all_recorded() {
+fn concurrent_plants_into_one_forest_are_all_recorded() {
     let sb = Sandbox::new();
     let repos: Vec<String> = (0..24).map(|i| format!("repo{i}")).collect();
     for repo in &repos {
@@ -558,20 +558,20 @@ fn concurrent_grafts_into_one_forest_are_all_recorded() {
     }
     sb.ok(&sb.root, &["new", "busy"]);
 
-    let grafts: Vec<_> = repos
+    let plants: Vec<_> = repos
         .iter()
         .map(|repo| {
             let repo_path = format!("repos/{repo}");
             sb.isolate(&mut Command::new(env!("CARGO_BIN_EXE_workforest")))
                 .current_dir(&sb.root)
-                .args(["graft", "-f", "busy", &repo_path])
+                .args(["plant", "-f", "busy", &repo_path])
                 .stdout(Stdio::null())
                 .spawn()
-                .expect("start a graft")
+                .expect("start planting")
         })
         .collect();
-    for mut graft in grafts {
-        assert!(graft.wait().expect("wait for a graft").success());
+    for mut plant in plants {
+        assert!(plant.wait().expect("wait for planting").success());
     }
 
     let trees = sb.ok(&sb.root, &["ls", "busy"]);

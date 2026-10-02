@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use clap::CommandFactory;
 
 use crate::cli::{
-    Branching, BurnArgs, Cli, Command, ForestArg, GraftArgs, LsArgs, NewArgs, PruneArgs, Removal,
+    Branching, BurnArgs, Cli, Command, CutArgs, ForestArg, LsArgs, NewArgs, PlantArgs, Removal,
 };
 use crate::config::Config;
 use crate::error::{Context, Result, bail};
@@ -28,8 +28,8 @@ pub fn run(cli: Cli) -> Result<()> {
     };
     match command {
         Command::New(args) => new(&Config::from_env()?, args)?,
-        Command::Graft(args) => graft(&Config::from_env()?, args)?,
-        Command::Prune(args) => prune(&Config::from_env()?, args)?,
+        Command::Plant(args) => plant(&Config::from_env()?, args)?,
+        Command::Cut(args) => cut(&Config::from_env()?, args)?,
         Command::Burn(args) => burn(&Config::from_env()?, args)?,
         Command::Ls(args) => ls(&Config::from_env()?, args)?,
         Command::Status(args) => status(&Config::from_env()?, args)?,
@@ -40,18 +40,18 @@ pub fn run(cli: Cli) -> Result<()> {
 
 fn new(config: &Config, args: NewArgs) -> Result<()> {
     let sources = main_worktrees(&args.repos)?;
-    let forest = Forest::plant(config, &args.forest)?;
-    println!("planted forest {} at {}", forest.name, forest.dir.display());
+    let forest = Forest::create(config, &args.forest)?;
+    println!("new forest {} at {}", forest.name, forest.dir.display());
     if sources.is_empty() {
         return Ok(());
     }
-    graft_sources(&forest, sources, args.branching)
+    plant_sources(&forest, sources, args.branching)
 }
 
-fn graft(config: &Config, args: GraftArgs) -> Result<()> {
+fn plant(config: &Config, args: PlantArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
     let sources = main_worktrees(&args.repos)?;
-    graft_sources(&forest, sources, args.branching)
+    plant_sources(&forest, sources, args.branching)
 }
 
 /// The main worktree of each repo argument, all checked before anything changes.
@@ -60,13 +60,13 @@ fn main_worktrees(repos: &[String]) -> Result<Vec<PathBuf>> {
 }
 
 /// Add a worktree of each repo to `forest`, all on the same branch.
-fn graft_sources(forest: &Forest, sources: Vec<PathBuf>, branching: Branching) -> Result<()> {
+fn plant_sources(forest: &Forest, sources: Vec<PathBuf>, branching: Branching) -> Result<()> {
     let branch = branching.branch.unwrap_or_else(|| forest.name.clone());
     for source in sources {
         let repo = dir_name(&source);
         let dir = forest.tree_dir(&repo);
         if dir.symlink_metadata().is_ok() {
-            bail!("already grafted: {}", dir.display());
+            bail!("already planted: {}", dir.display());
         }
         let base = branching
             .base
@@ -80,20 +80,19 @@ fn graft_sources(forest: &Forest, sources: Vec<PathBuf>, branching: Branching) -
             base: base.clone(),
         })?;
         println!(
-            "grafted {repo} -> {} (branch {branch}, off {base})",
+            "planted {repo} -> {} (branch {branch}, off {base})",
             dir.display()
         );
     }
-    println!("forest {}: {}", forest.name, forest.dir.display());
     Ok(())
 }
 
-fn prune(config: &Config, args: PruneArgs) -> Result<()> {
+fn cut(config: &Config, args: CutArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
-    for arg in &args.repos {
+    for arg in &args.trees {
         let repo = dir_name(Path::new(arg));
         let Some(tree) = forest.tree(&repo)? else {
-            bail!("{repo} is not grafted into {}", forest.name);
+            bail!("{repo} is not a tree in {}", forest.name);
         };
         if !args.removal.force
             && let Some(risk) = git::unlanded_work(&forest.tree_dir(&tree.repo), &tree.base)
@@ -103,7 +102,7 @@ fn prune(config: &Config, args: PruneArgs) -> Result<()> {
         let dir = forest.tree_dir(&tree.repo);
         let standing_in_it = cwd_is_within(&dir);
         remove_tree(&forest, &tree, &args.removal)?;
-        println!("pruned {repo} from {}", forest.name);
+        println!("cut {repo} from {}", forest.name);
         if standing_in_it {
             point_out_of(&dir, &tree.source);
         }

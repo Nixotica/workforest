@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercise an installed workforest the way a user would: plant a forest in a
+# Exercise an installed workforest the way a user would: start a forest in a
 # throwaway set of repos, check that unlanded work blocks the burn, land it,
 # and burn the forest. Also checks that `wf` runs the same binary and that the
 # package ships the skill.
