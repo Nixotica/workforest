@@ -13,20 +13,20 @@ skill="$(cd "$(dirname "$0")/.." && pwd)/plugin/skills/workforest/SKILL.md"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-export HOME="$tmp/home" WORKFOREST_ROOT="$tmp/forests" WORKFOREST_REPOS="$tmp/repos"
+export HOME="$tmp/home" WORKFOREST_ROOT="$tmp/forests"
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$tmp/home/.gitconfig"
 export GIT_AUTHOR_NAME=smoke GIT_AUTHOR_EMAIL=smoke@example.com
 export GIT_COMMITTER_NAME=smoke GIT_COMMITTER_EMAIL=smoke@example.com
-mkdir -p "$HOME" "$WORKFOREST_REPOS"
+mkdir -p "$HOME" "$tmp/repos"
 
 git init --quiet --initial-branch=main "$tmp/seed"
 git -C "$tmp/seed" commit --quiet --allow-empty --message initial
 git clone --quiet --bare "$tmp/seed" "$tmp/origin.git"
-git clone --quiet "$tmp/origin.git" "$WORKFOREST_REPOS/demo"
+git clone --quiet "$tmp/origin.git" "$tmp/repos/demo"
 
 "$workforest" --version
 test "$("$prefix/bin/wf" --version)" = "$("$workforest" --version)"
-"$workforest" new smoke demo
+"$workforest" new smoke "$tmp/repos/demo"
 tree="$("$workforest" path smoke)/demo"
 echo change >"$tree/file"
 "$workforest" status smoke | grep --quiet dirty

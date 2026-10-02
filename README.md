@@ -6,11 +6,11 @@ one branch named after the forest. The repos' main checkouts are never touched,
 so several pieces of work, or several coding agents, can be in flight at once.
 
 ```sh
-workforest new auth-migration api web     # ~/.workforest/auth-migration/{api,web}, on branch auth-migration
+workforest new auth-migration ~/code/api ~/code/web   # both trees on branch auth-migration
 cd "$(workforest path auth-migration)"
-workforest status                         # what's dirty, what's ahead of its base
+workforest status                                     # what's dirty, what's ahead of its base
 workforest exec -- git push -u origin HEAD
-workforest rm auth-migration              # refuses while any work would be lost
+workforest rm auth-migration                          # refuses while any work would be lost
 ```
 
 A forest with a single tree is normal. Trees are `git worktree`s, so they share
@@ -78,9 +78,9 @@ For other agents, put the skill wherever they read skills from.
 
 | command | what it does |
 | --- | --- |
-| `workforest new <forest> [repo...]` | plant a forest, optionally grafting repos right away |
-| `workforest graft <repo>...` | add worktrees to a forest |
-| `workforest prune <repo>...` | remove worktrees from a forest |
+| `workforest new <forest> [repo path...]` | plant a forest, optionally grafting repos right away |
+| `workforest graft <repo path>...` | add worktrees to a forest |
+| `workforest prune <tree>...` | remove worktrees from a forest, by tree name |
 | `workforest rm <forest>` | remove a forest and every tree in it |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
@@ -96,8 +96,10 @@ off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `prune`
 and `rm` refuse to delete uncommitted changes or unpushed commits unless you
 pass `--force`. Run `workforest help <command>` for the details.
 
-Repos are named relative to `$WORKFOREST_REPOS` (default `~/repos`); an
-argument containing `/` or starting with `.` is a path. Forests live under
+Repos are given as paths, absolute or relative to the current directory:
+`wf new fix-login .` plants a forest for the repo you're in. workforest assumes
+nothing about where your repos live, so a bare name like `api` is rejected;
+#20 tracks naming repos after a one-time setup. Forests live under
 `$WORKFOREST_ROOT` (default `~/.workforest`).
 
 ## Development

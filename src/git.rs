@@ -4,7 +4,6 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::config::Config;
 use crate::error::{Context, Result, bail};
 
 fn git(dir: &Path) -> Command {
@@ -63,21 +62,21 @@ where
     bail!("`git {}` failed in {}", shown.join(" "), dir.display())
 }
 
-/// The main worktree of the repo `arg` names: a directory under the repos root,
-/// or a path when `arg` contains `/` or starts with `.`.
-pub fn main_worktree(config: &Config, arg: &str) -> Result<PathBuf> {
-    let path = if arg.contains('/') || arg.starts_with('.') {
-        PathBuf::from(arg)
-    } else {
-        config.repos_root.join(arg)
-    };
+/// The main worktree of the repo at `arg`, a path that is absolute or relative
+/// to the current directory. A bare name is rejected rather than guessed at:
+/// nothing says which directory it would name a repo in.
+pub fn main_worktree(arg: &str) -> Result<PathBuf> {
+    if !arg.contains('/') && !arg.starts_with('.') {
+        bail!("{arg} is a name, not a path: pass the repo's path, such as ./{arg}");
+    }
+    let path = Path::new(arg);
     if !path.is_dir() {
         bail!("no such repo: {}", path.display());
     }
-    if !succeeds(&path, ["rev-parse", "--git-dir"]) {
+    if !succeeds(path, ["rev-parse", "--git-dir"]) {
         bail!("not a git repo: {}", path.display());
     }
-    let list = output(&path, ["worktree", "list", "--porcelain"]).unwrap_or_default();
+    let list = output(path, ["worktree", "list", "--porcelain"]).unwrap_or_default();
     match list.lines().find_map(|line| line.strip_prefix("worktree ")) {
         Some(main) => Ok(PathBuf::from(main)),
         None => bail!("could not find the main worktree of {}", path.display()),

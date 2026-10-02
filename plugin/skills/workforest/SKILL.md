@@ -6,8 +6,8 @@ description: Manage "workforests" — collections of git worktrees under ~/.work
 # workforest
 
 A **forest** is a directory under `~/.workforest/` holding one git worktree ("tree")
-per repo involved in a piece of work. Each tree is a worktree of the repo's main
-checkout in `~/repos/<name>`, checked out on a shared branch named after the
+per repo involved in a piece of work. Each tree is a worktree of a repo's main
+checkout, wherever that lives, checked out on a shared branch named after the
 forest. The main checkouts are never modified — no branch switching, no
 stashing — so several pieces of work can be in flight at once.
 
@@ -18,8 +18,8 @@ something forests also happen to do.
 ```
 ~/.workforest/auth-migration/
 ├── .workforest     manifest: repo \t source repo \t branch \t base ref
-├── api/            worktree of ~/repos/api on branch auth-migration
-└── web/            worktree of ~/repos/web on branch auth-migration
+├── api/            worktree of ~/code/api on branch auth-migration
+└── web/            worktree of ~/code/web on branch auth-migration
 ```
 
 A tree costs only its checked-out files: worktrees share their repo's object
@@ -65,7 +65,7 @@ Plant one — and do the work inside it — whenever any of these hold,
 - The change should not disturb whatever is currently checked out in the main
   checkout.
 
-**A single repo never disqualifies a forest.** `workforest new my-feature myrepo`
+**A single repo never disqualifies a forest.** `workforest new my-feature ~/code/myrepo`
 creates a one-tree forest and is a first-class, expected use. If the user asks
 to use workforest and the work touches one repo, plant the forest anyway — do
 not substitute a plain branch in the main checkout, do not "simplify" to
@@ -84,9 +84,9 @@ forest you're standing in.
 
 | command | what it does |
 | --- | --- |
-| `workforest new <forest> [repo...]` | plant a forest, optionally grafting repos right away |
-| `workforest graft <repo>...` | add worktrees to a forest |
-| `workforest prune <repo>...` | remove worktrees from a forest |
+| `workforest new <forest> [repo path...]` | plant a forest, optionally grafting repos right away |
+| `workforest graft <repo path>...` | add worktrees to a forest |
+| `workforest prune <tree>...` | remove worktrees from a forest, by tree name |
 | `workforest rm <forest>` | remove a forest and every tree in it |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
@@ -115,17 +115,19 @@ Options:
   and unpushed commits.
 - `--delete-branches` — on `prune`/`rm`, also delete the trees' branches.
 
-Repo arguments are names relative to `~/repos`; anything containing `/` or
-starting with `.` is treated as a path, so repos elsewhere can be grafted too.
+Repos are always given as paths: absolute, or relative to the current
+directory, where `.` is the repo you're in. workforest assumes nothing about
+where repos live, so a bare name like `api` is rejected. In commands you run,
+pass absolute paths. When the user names a repo without saying where it is,
+find it or ask; don't guess.
 
-Environment: `WORKFOREST_ROOT` (default `~/.workforest`) and `WORKFOREST_REPOS`
-(default `~/repos`). Where this skill says `~/.workforest` or `~/repos`, read those
-values if they are set.
+Environment: `WORKFOREST_ROOT` (default `~/.workforest`). Where this skill says
+`~/.workforest`, read that value if it is set.
 
 ## Typical flow
 
 ```sh
-workforest new fix-login api                  # single-repo forest — a normal case
+workforest new fix-login ~/code/api           # single-repo forest — a normal case
 cd "$(workforest path fix-login)/api"
 # ...edit, commit, push, merge, then...
 workforest rm fix-login
@@ -134,10 +136,10 @@ workforest rm fix-login
 Multi-repo is the same commands with more arguments:
 
 ```sh
-workforest new auth-migration api web         # both trees on branch auth-migration
+workforest new auth-migration ~/code/api ~/code/web    # both on branch auth-migration
 cd "$(workforest path auth-migration)"
 # ...edit across api/ and web/...
-workforest graft docs                         # a third repo turned out to be involved
+workforest graft ~/code/docs                  # a third repo turned out to be involved
 workforest status                             # what's dirty, what's ahead
 workforest exec -- git push -u origin HEAD    # push every tree
 workforest rm auth-migration --delete-branches
@@ -178,14 +180,14 @@ expected; show the step 3 diff and ask before using `--force`.
 ## Guidance for Claude
 
 - Plant the forest **before** the first edit, whenever the "When to plant a
-  forest" rules above apply. Never create ad-hoc worktrees in or around the
-  repos directory.
+  forest" rules above apply. Never create ad-hoc worktrees in or around a
+  repo's main checkout.
 - One repo is enough. Never treat repo count as a reason to skip the forest,
   and never downgrade an explicit workforest request to a branch in the main
   checkout — the isolation, not the repo count, is what was asked for.
 - If you have already started editing in a main checkout and a forest was
   wanted, say so and move the work: plant the forest, carry the changes over
-  (e.g. `git -C ~/repos/<name> diff | git -C <tree> apply`), and restore the
+  (e.g. `git -C <main checkout> diff | git -C <tree> apply`), and restore the
   main checkout.
 - Work from a tree directory for single-repo changes; work from the forest root
   when the change spans repos — relative paths like `api/src/...` then resolve

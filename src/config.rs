@@ -1,4 +1,4 @@
-//! Where forests live and where repos are found.
+//! Where forests live.
 
 use std::env;
 use std::path::PathBuf;
@@ -8,17 +8,16 @@ use crate::error::{Result, bail};
 pub struct Config {
     /// Directory holding one subdirectory per forest.
     pub forest_root: PathBuf,
-    /// Directory that bare repo names are resolved against.
-    pub repos_root: PathBuf,
 }
 
 impl Config {
-    /// `$WORKFOREST_ROOT` and `$WORKFOREST_REPOS`, defaulting to `~/.workforest` and `~/repos`.
+    /// `$WORKFOREST_ROOT`, defaulting to `~/.workforest`.
     pub fn from_env() -> Result<Config> {
-        Ok(Config {
-            forest_root: dir_from_env("WORKFOREST_ROOT", ".workforest")?,
-            repos_root: dir_from_env("WORKFOREST_REPOS", "repos")?,
-        })
+        let forest_root = match env::var_os("WORKFOREST_ROOT") {
+            Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+            _ => home()?.join(".workforest"),
+        };
+        Ok(Config { forest_root })
     }
 }
 
@@ -27,12 +26,5 @@ fn home() -> Result<PathBuf> {
     match env::var_os("HOME") {
         Some(home) if !home.is_empty() => Ok(PathBuf::from(home)),
         _ => bail!("HOME is not set"),
-    }
-}
-
-fn dir_from_env(var: &str, default_in_home: &str) -> Result<PathBuf> {
-    match env::var_os(var) {
-        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
-        _ => Ok(home()?.join(default_in_home)),
     }
 }

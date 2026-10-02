@@ -12,15 +12,14 @@ pub const VERSION: &str = match option_env!("WORKFOREST_VERSION") {
 };
 
 const AFTER_HELP: &str = "\
-Repos are named relative to $WORKFOREST_REPOS (default ~/repos); an argument
-containing `/` or starting with `.` is a path. Forests live under
-$WORKFOREST_ROOT (default ~/.workforest).
+Repos are given as paths, absolute or relative to the current directory: `.` is
+the repo you're in. Forests live under $WORKFOREST_ROOT (default ~/.workforest).
 
 Examples:
-  workforest new fix-login api              single-repo forest on branch fix-login
-  workforest new auth-migration api web     two trees on branch auth-migration
+  workforest new fix-login .                       one tree: the repo you're in
+  workforest new auth-migration ~/code/api ~/code/web
   cd \"$(workforest path auth-migration)\"
-  workforest graft docs -B origin/release   add a third tree off another base
+  workforest graft ~/code/docs -B origin/release   a third tree, off another base
   workforest exec -- git push -u origin HEAD
   workforest rm auth-migration --delete-branches";
 
@@ -66,7 +65,7 @@ pub enum Command {
 pub struct NewArgs {
     /// Name of the forest, which is also the default branch name
     pub forest: String,
-    /// Repos to graft right away
+    /// Paths of repos to graft right away
     pub repos: Vec<String>,
     #[command(flatten)]
     pub branching: Branching,
@@ -74,7 +73,7 @@ pub struct NewArgs {
 
 #[derive(Args)]
 pub struct GraftArgs {
-    /// Repos to graft
+    /// Paths of repos to graft
     #[arg(required = true)]
     pub repos: Vec<String>,
     #[command(flatten)]

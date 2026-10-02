@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::process::ExitStatusExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::CommandFactory;
@@ -44,29 +44,30 @@ pub fn run(cli: Cli) -> Result<u8> {
 }
 
 fn new(config: &Config, args: NewArgs) -> Result<()> {
+    let sources = main_worktrees(&args.repos)?;
     let forest = Forest::plant(config, &args.forest)?;
     println!("planted forest {} at {}", forest.name, forest.dir.display());
-    if args.repos.is_empty() {
+    if sources.is_empty() {
         return Ok(());
     }
-    graft_repos(config, &forest, &args.repos, args.branching)
+    graft_sources(&forest, sources, args.branching)
 }
 
 fn graft(config: &Config, args: GraftArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
-    graft_repos(config, &forest, &args.repos, args.branching)
+    let sources = main_worktrees(&args.repos)?;
+    graft_sources(&forest, sources, args.branching)
+}
+
+/// The main worktree of each repo argument, all checked before anything changes.
+fn main_worktrees(repos: &[String]) -> Result<Vec<PathBuf>> {
+    repos.iter().map(|arg| git::main_worktree(arg)).collect()
 }
 
 /// Add a worktree of each repo to `forest`, all on the same branch.
-fn graft_repos(
-    config: &Config,
-    forest: &Forest,
-    repos: &[String],
-    branching: Branching,
-) -> Result<()> {
+fn graft_sources(forest: &Forest, sources: Vec<PathBuf>, branching: Branching) -> Result<()> {
     let branch = branching.branch.unwrap_or_else(|| forest.name.clone());
-    for arg in repos {
-        let source = git::main_worktree(config, arg)?;
+    for source in sources {
         let repo = dir_name(&source);
         let dir = forest.tree_dir(&repo);
         if dir.symlink_metadata().is_ok() {
