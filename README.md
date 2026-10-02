@@ -47,9 +47,12 @@ missing, the agent offers to install it.
 As a Claude Code plugin, which follows the rolling releases:
 
 ```
-/plugin marketplace add Nixotica/workforest
+/plugin marketplace add Nixotica/workforest#release
 /plugin install workforest@workforest
 ```
+
+`#release` makes the marketplace follow the `release` branch, which only ever
+holds commits that passed CI. Without it, you follow `main`.
 
 Claude Code leaves auto-update off for third-party marketplaces. To receive
 each release automatically, turn it on under `/plugin` → **Marketplaces** →
