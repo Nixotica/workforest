@@ -9,8 +9,8 @@ use std::process;
 use clap::CommandFactory;
 
 use crate::cli::{
-    Branching, Cli, Command, ExecArgs, ForestArg, GraftArgs, LsArgs, NewArgs, PruneArgs, Removal,
-    RmArgs,
+    Branching, BurnArgs, Cli, Command, ExecArgs, ForestArg, GraftArgs, LsArgs, NewArgs, PruneArgs,
+    Removal,
 };
 use crate::config::Config;
 use crate::error::{Context, Result, bail};
@@ -34,7 +34,7 @@ pub fn run(cli: Cli) -> Result<u8> {
         Command::New(args) => new(&Config::from_env()?, args)?,
         Command::Graft(args) => graft(&Config::from_env()?, args)?,
         Command::Prune(args) => prune(&Config::from_env()?, args)?,
-        Command::Rm(args) => rm(&Config::from_env()?, args)?,
+        Command::Burn(args) => burn(&Config::from_env()?, args)?,
         Command::Ls(args) => ls(&Config::from_env()?, args)?,
         Command::Status(args) => status(&Config::from_env()?, args)?,
         Command::Path(args) => path(&Config::from_env()?, args)?,
@@ -111,7 +111,7 @@ fn prune(config: &Config, args: PruneArgs) -> Result<()> {
     Ok(())
 }
 
-fn rm(config: &Config, args: RmArgs) -> Result<()> {
+fn burn(config: &Config, args: BurnArgs) -> Result<()> {
     let forest = Forest::named(config, &args.forest)?;
     if forest.contains_cwd() {
         bail!("cd out of {} before burning it", forest.dir.display());

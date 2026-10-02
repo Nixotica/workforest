@@ -21,7 +21,7 @@ Examples:
   cd \"$(workforest path auth-migration)\"
   workforest graft ~/code/docs -B origin/release   a third tree, off another base
   workforest exec -- git push -u origin HEAD
-  workforest rm auth-migration --delete-branches";
+  workforest burn auth-migration --delete-branches";
 
 /// One git worktree per repo in a piece of work, isolated from the main
 /// checkouts. A forest with a single tree is normal; several trees share one
@@ -44,9 +44,9 @@ pub enum Command {
     /// Remove worktrees from a forest
     #[command(visible_alias = "remove")]
     Prune(PruneArgs),
-    /// Remove a forest and every tree in it
-    #[command(visible_aliases = ["burn", "delete"])]
-    Rm(RmArgs),
+    /// Burn a forest: remove it and every tree in it
+    #[command(visible_aliases = ["rm", "delete"])]
+    Burn(BurnArgs),
     /// List forests, or the trees in one
     #[command(visible_alias = "list")]
     Ls(LsArgs),
@@ -94,8 +94,8 @@ pub struct PruneArgs {
 }
 
 #[derive(Args)]
-pub struct RmArgs {
-    /// Forest to remove
+pub struct BurnArgs {
+    /// Forest to burn
     pub forest: String,
     #[command(flatten)]
     pub removal: Removal,

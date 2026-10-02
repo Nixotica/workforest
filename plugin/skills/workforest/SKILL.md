@@ -87,13 +87,13 @@ forest you're standing in.
 | `workforest new <forest> [repo path...]` | plant a forest, optionally grafting repos right away |
 | `workforest graft <repo path>...` | add worktrees to a forest |
 | `workforest prune <tree>...` | remove worktrees from a forest, by tree name |
-| `workforest rm <forest>` | remove a forest and every tree in it |
+| `workforest burn <forest>` | remove a forest and every tree in it |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
 | `workforest path [forest]` | print a forest's path |
 | `workforest exec [--] <cmd>...` | run a command in every tree, one tree at a time |
 
-Aliases: `plant`=`new`, `add`=`graft`, `remove`=`prune`, `burn`/`delete`=`rm`,
+Aliases: `plant`=`new`, `add`=`graft`, `remove`=`prune`, `rm`/`delete`=`burn`,
 `list`=`ls`, `st`=`status`, `dir`=`path`, `each`=`exec`.
 
 `wf` is a short name for `workforest` itself, which the Nix package installs.
@@ -111,9 +111,9 @@ Options:
   a repo, it is checked out rather than recreated.
 - `-B, --base <ref>` — what to branch off. Defaults to `origin/HEAD`, falling
   back to a local `main` or `master`.
-- `--force` — on `prune`/`rm`, skip the safety checks for uncommitted changes
+- `--force` — on `prune`/`burn`, skip the safety checks for uncommitted changes
   and unpushed commits.
-- `--delete-branches` — on `prune`/`rm`, also delete the trees' branches.
+- `--delete-branches` — on `prune`/`burn`, also delete the trees' branches.
 
 Repos are always given as paths: absolute, or relative to the current
 directory, where `.` is the repo you're in. workforest assumes nothing about
@@ -130,7 +130,7 @@ Environment: `WORKFOREST_ROOT` (default `~/.workforest`). Where this skill says
 workforest new fix-login ~/code/api           # single-repo forest — a normal case
 cd "$(workforest path fix-login)/api"
 # ...edit, commit, push, merge, then...
-workforest rm fix-login
+workforest burn fix-login
 ```
 
 Multi-repo is the same commands with more arguments:
@@ -142,7 +142,7 @@ cd "$(workforest path auth-migration)"
 workforest graft ~/code/docs                  # a third repo turned out to be involved
 workforest status                             # what's dirty, what's ahead
 workforest exec -- git push -u origin HEAD    # push every tree
-workforest rm auth-migration --delete-branches
+workforest burn auth-migration --delete-branches
 ```
 
 ## Burn the forest once its work has landed
@@ -151,7 +151,7 @@ A forest is scaffolding for one piece of work. When that work is merged, burn
 it: a forest left standing keeps a checkout on disk, and `workforest ls` stops
 being a picture of what is really in flight.
 
-`rm` refuses to remove a tree with uncommitted changes, unpushed commits, or
+`burn` refuses to remove a tree with uncommitted changes, unpushed commits, or
 commits ahead of its base. That refusal means the work has not actually landed
 — say what would be lost and ask; do not reach for `--force` on the user's
 behalf.
@@ -160,7 +160,7 @@ behalf.
 
 A squash merge is never an ancestor of the branch it came from. A freshly
 planted branch tracks its base, so once the work is squashed onto that base,
-`rm` still counts the branch's commits as not landed and refuses. Order the
+`burn` still counts the branch's commits as not landed and refuses. Order the
 landing so the refusal never comes up:
 
 1. Push with `git push -u origin HEAD`, so the branch tracks its *own* remote
@@ -169,7 +169,7 @@ landing so the refusal never comes up:
    `gh pr merge <n> --squash`, without `--delete-branch`).
 3. Fetch, and confirm the work is on the base, path by path:
    `git diff --quiet origin/<base> HEAD -- <changed files>`.
-4. `workforest rm <forest> --delete-branches`.
+4. `workforest burn <forest> --delete-branches`.
 5. Only then delete the remote branch: `git push origin --delete <branch>`.
    Deleting it before the burn takes the upstream away and brings the refusal
    back.

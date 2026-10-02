@@ -10,7 +10,7 @@ workforest new auth-migration ~/code/api ~/code/web   # both trees on branch aut
 cd "$(workforest path auth-migration)"
 workforest status                                     # what's dirty, what's ahead of its base
 workforest exec -- git push -u origin HEAD
-workforest rm auth-migration                          # refuses while any work would be lost
+workforest burn auth-migration                        # refuses while any work would be lost
 ```
 
 A forest with a single tree is normal. Trees are `git worktree`s, so they share
@@ -81,7 +81,7 @@ For other agents, put the skill wherever they read skills from.
 | `workforest new <forest> [repo path...]` | plant a forest, optionally grafting repos right away |
 | `workforest graft <repo path>...` | add worktrees to a forest |
 | `workforest prune <tree>...` | remove worktrees from a forest, by tree name |
-| `workforest rm <forest>` | remove a forest and every tree in it |
+| `workforest burn <forest>` | remove a forest and every tree in it (aliases: `rm`, `delete`) |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
 | `workforest path [forest]` | print a forest's path |
@@ -93,7 +93,7 @@ cargo, add it yourself: `ln -s workforest ~/.cargo/bin/wf`.
 Inside a forest, commands act on that forest unless told otherwise. Every tree
 gets the branch named after its forest unless you pass `--branch`, and branches
 off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `prune`
-and `rm` refuse to delete uncommitted changes or unpushed commits unless you
+and `burn` refuse to delete uncommitted changes or unpushed commits unless you
 pass `--force`. Run `workforest help <command>` for the details.
 
 Repos are given as paths, absolute or relative to the current directory:

@@ -30,14 +30,14 @@ test "$("$prefix/bin/wf" --version)" = "$("$workforest" --version)"
 tree="$("$workforest" path smoke)/demo"
 echo change >"$tree/file"
 "$workforest" status smoke | grep --quiet dirty
-if "$workforest" rm smoke; then
+if "$workforest" burn smoke; then
   echo "rm burned a forest with uncommitted work" >&2
   exit 1
 fi
 git -C "$tree" add file
 git -C "$tree" commit --quiet --message change
 git -C "$tree" push --quiet --set-upstream origin HEAD
-"$workforest" rm smoke --delete-branches
+"$workforest" burn smoke --delete-branches
 test ! -e "$WORKFOREST_ROOT/smoke"
 
 cmp "$prefix/share/workforest/skills/workforest/SKILL.md" "$skill"

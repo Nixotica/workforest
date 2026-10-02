@@ -436,7 +436,7 @@ fn commits_ahead_of_a_local_base_are_not_pushed_anywhere() {
     sb.ok(&sb.root, &["new", "loc", "repos/api", "-B", "main"]);
     sb.commit(&sb.forest("loc").join("api"), "work.txt");
 
-    let refusal = sb.fails(&sb.root, &["rm", "loc"]);
+    let refusal = sb.fails(&sb.root, &["burn", "loc"]);
     assert!(
         refusal.contains("api: 1 commit(s) not pushed anywhere"),
         "{refusal}"
@@ -457,14 +457,14 @@ fn prune_cleans_up_a_tree_deleted_by_hand() {
 }
 
 #[test]
-fn rm_burns_a_forest_only_when_no_work_would_be_lost() {
+fn burn_removes_a_forest_only_when_no_work_would_be_lost() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     sb.repo("web");
     sb.ok(&sb.root, &["new", "blaze", "repos/api", "repos/web"]);
     let forest = sb.forest("blaze");
 
-    let inside = sb.fails(&forest.join("api"), &["rm", "blaze"]);
+    let inside = sb.fails(&forest.join("api"), &["burn", "blaze"]);
     assert!(inside.contains("cd out of"), "{inside}");
 
     sb.commit(&forest.join("api"), "work.txt");
@@ -492,7 +492,7 @@ fn rm_burns_a_forest_only_when_no_work_would_be_lost() {
 }
 
 #[test]
-fn rm_force_discards_work_and_can_delete_branches() {
+fn burn_force_discards_work_and_can_delete_branches() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     sb.ok(&sb.root, &["new", "doomed", "repos/api"]);
@@ -510,7 +510,7 @@ fn rm_force_discards_work_and_can_delete_branches() {
 }
 
 #[test]
-fn rm_refuses_to_delete_a_checkout_the_manifest_does_not_record() {
+fn burn_refuses_to_delete_a_checkout_the_manifest_does_not_record() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     sb.ok(&sb.root, &["new", "stray"]);
@@ -527,14 +527,14 @@ fn rm_refuses_to_delete_a_checkout_the_manifest_does_not_record() {
         ],
     );
 
-    let refusal = sb.fails(&sb.root, &["rm", "stray"]);
+    let refusal = sb.fails(&sb.root, &["burn", "stray"]);
     assert!(
         refusal.contains("  api: a checkout the manifest doesn't record"),
         "{refusal}"
     );
     assert!(checkout.is_dir(), "a refusal removes nothing");
 
-    sb.ok(&sb.root, &["rm", "stray", "--force"]);
+    sb.ok(&sb.root, &["burn", "stray", "--force"]);
     assert!(!sb.forest("stray").exists());
 }
 
