@@ -7,7 +7,6 @@ mod config;
 mod error;
 mod forest;
 mod git;
-mod skill;
 
 use std::process::ExitCode;
 

@@ -36,7 +36,6 @@
               ./Cargo.lock
               ./src
               ./tests
-              ./plugin/skills
             ];
           };
           commonArgs = {
@@ -55,7 +54,7 @@
               # this derivation; the dependency build stays cached across commits.
               WORKFOREST_VERSION = "${cargoToml.package.version} (${rev})";
               postInstall = ''
-                install -Dm644 plugin/skills/workforest/SKILL.md \
+                install -Dm644 ${./plugin/skills/workforest/SKILL.md} \
                   "$out/share/workforest/skills/workforest/SKILL.md"
               '';
               meta = {

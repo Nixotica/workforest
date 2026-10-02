@@ -23,7 +23,7 @@ impl Config {
 }
 
 /// `$HOME`, which must be set.
-pub fn home() -> Result<PathBuf> {
+fn home() -> Result<PathBuf> {
     match env::var_os("HOME") {
         Some(home) if !home.is_empty() => Ok(PathBuf::from(home)),
         _ => bail!("HOME is not set"),

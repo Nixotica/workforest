@@ -1,7 +1,6 @@
 //! The command-line interface.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
@@ -61,9 +60,6 @@ pub enum Command {
     /// Run a command in every tree of a forest, one tree at a time
     #[command(visible_alias = "each")]
     Exec(ExecArgs),
-    /// Install the agent skill that teaches coding agents to use workforest
-    #[command(subcommand)]
-    Skill(SkillCommand),
 }
 
 #[derive(Args)]
@@ -160,17 +156,4 @@ pub struct Removal {
     /// Also delete the trees' branches from their repos
     #[arg(long)]
     pub delete_branches: bool,
-}
-
-#[derive(Subcommand)]
-pub enum SkillCommand {
-    /// Write the bundled SKILL.md into a skills directory
-    Install(SkillInstallArgs),
-}
-
-#[derive(Args)]
-pub struct SkillInstallArgs {
-    /// Skills directory [default: $CLAUDE_CONFIG_DIR/skills, else ~/.claude/skills]
-    #[arg(long)]
-    pub dir: Option<PathBuf>,
 }

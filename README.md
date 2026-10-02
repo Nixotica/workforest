@@ -57,13 +57,22 @@ each release automatically, turn it on under `/plugin` → **Marketplaces** →
 workforest → **Enable auto-update**; otherwise run
 `/plugin marketplace update workforest` to update.
 
-Or from the CLI, matching the installed version:
+Without the plugin, link the copy the Nix package installs, so the skill
+updates along with the CLI:
 
 ```sh
-workforest skill install    # writes ~/.claude/skills/workforest/SKILL.md
+ln -s ~/.nix-profile/share/workforest/skills/workforest ~/.claude/skills/workforest
 ```
 
-Re-run it after updating workforest.
+or fetch it from the `release` branch, which takes a re-run to update:
+
+```sh
+mkdir -p ~/.claude/skills/workforest
+curl -fsSL https://raw.githubusercontent.com/Nixotica/workforest/release/plugin/skills/workforest/SKILL.md \
+  -o ~/.claude/skills/workforest/SKILL.md
+```
+
+For other agents, put the skill wherever they read skills from.
 
 ## Usage
 
@@ -77,7 +86,6 @@ Re-run it after updating workforest.
 | `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
 | `workforest path [forest]` | print a forest's path |
 | `workforest exec [--] <cmd>...` | run a command in every tree, one tree at a time |
-| `workforest skill install` | install the agent skill |
 
 Inside a forest, commands act on that forest unless told otherwise. Every tree
 gets the branch named after its forest unless you pass `--branch`, and branches

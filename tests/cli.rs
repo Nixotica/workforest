@@ -54,7 +54,6 @@ impl Sandbox {
             .env("WORKFOREST_REPOS", self.repos())
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
-            .env_remove("CLAUDE_CONFIG_DIR")
     }
 
     fn git(&self, dir: &Path, args: &[&str]) -> String {
@@ -530,46 +529,6 @@ fn concurrent_grafts_into_one_forest_are_all_recorded() {
             "{repo} is missing:\n{trees}"
         );
     }
-}
-
-#[test]
-fn skill_install_writes_the_bundled_skill() {
-    let sb = Sandbox::new();
-    let dir = sb.root.join("skills");
-    let skill = dir.join("workforest").join("SKILL.md");
-
-    let out = sb.ok(&sb.root, &["skill", "install", "--dir", path(&dir)]);
-
-    assert!(out.contains(path(&skill)), "{out}");
-    assert_eq!(
-        fs::read_to_string(&skill).unwrap(),
-        include_str!("../plugin/skills/workforest/SKILL.md")
-    );
-    let again = sb.ok(&sb.root, &["skill", "install", "--dir", path(&dir)]);
-    assert!(again.contains("already up to date"), "{again}");
-}
-
-#[test]
-fn skill_install_leaves_a_symlinked_skill_alone() {
-    let sb = Sandbox::new();
-    let managed = sb.root.join("managed");
-    fs::create_dir_all(managed.join("workforest")).unwrap();
-    let elsewhere = sb.root.join("older.md");
-    fs::write(&elsewhere, "an older skill\n").unwrap();
-    symlink(&elsewhere, managed.join("workforest").join("SKILL.md")).unwrap();
-
-    let err = sb.fails(&sb.root, &["skill", "install", "--dir", path(&managed)]);
-
-    assert!(err.contains("is a symlink"), "{err}");
-    assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "an older skill\n");
-}
-
-#[test]
-fn skill_install_defaults_to_the_claude_skills_directory() {
-    let sb = Sandbox::new();
-    sb.ok(&sb.root, &["skill", "install"]);
-    let skill = sb.root.join("home/.claude/skills/workforest/SKILL.md");
-    assert!(skill.is_file());
 }
 
 #[test]

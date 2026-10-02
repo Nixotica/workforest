@@ -10,13 +10,12 @@ use clap::CommandFactory;
 
 use crate::cli::{
     Branching, Cli, Command, ExecArgs, ForestArg, GraftArgs, LsArgs, NewArgs, PruneArgs, Removal,
-    RmArgs, SkillCommand,
+    RmArgs,
 };
 use crate::config::Config;
 use crate::error::{Context, Result, bail};
 use crate::forest::{Forest, Tree};
 use crate::git;
-use crate::skill;
 
 /// How to name a forest to commands that take it with `-f`.
 const NAME_WITH_FLAG: &str = "pass -f <forest>";
@@ -40,7 +39,6 @@ pub fn run(cli: Cli) -> Result<u8> {
         Command::Status(args) => status(&Config::from_env()?, args)?,
         Command::Path(args) => path(&Config::from_env()?, args)?,
         Command::Exec(args) => return exec(&Config::from_env()?, args),
-        Command::Skill(SkillCommand::Install(args)) => skill::install(args.dir)?,
     }
     Ok(0)
 }

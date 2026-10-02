@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exercise an installed workforest the way a user would: plant a forest in a
 # throwaway set of repos, check that unlanded work blocks the burn, land it,
-# burn the forest, and install the skill.
+# and burn the forest. Also checks that the package ships the skill.
 #
 # usage: ci/smoke.sh <prefix>   where <prefix>/bin/workforest is the install
 set -euo pipefail
@@ -39,6 +39,4 @@ git -C "$tree" push --quiet --set-upstream origin HEAD
 test ! -e "$WORKFOREST_ROOT/smoke"
 
 cmp "$prefix/share/workforest/skills/workforest/SKILL.md" "$skill"
-"$wf" skill install --dir "$tmp/skills"
-cmp "$tmp/skills/workforest/SKILL.md" "$skill"
 echo "smoke test passed"
