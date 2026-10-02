@@ -47,3 +47,6 @@ jobs:
           DISABLE_AUTOUPDATER: "1"
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
         run: node ci/validate-plugin.mjs
+
+      - name: Test the session-start hook
+        run: node ci/test-hook.mjs

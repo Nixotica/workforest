@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Exercise an installed workforest the way a user would: start a forest in a
 # throwaway set of repos, check that unlanded work blocks the burn, land it,
-# and burn the forest. Also checks that `wf` runs the same binary and that the
-# package ships the skill.
+# and burn the forest. Also checks that `wf` runs the same binary, that the
+# package ships the skill, and that the plugin's session-start hook accepts the
+# installed CLI.
 #
 # usage: ci/smoke.sh <prefix>   where <prefix>/bin/workforest is the install
 set -euo pipefail
 
 prefix=$(cd "${1:?usage: smoke.sh <install prefix>}" && pwd)
 workforest="$prefix/bin/workforest"
-skill="$(cd "$(dirname "$0")/.." && pwd)/plugin/skills/workforest/SKILL.md"
+plugin="$(cd "$(dirname "$0")/.." && pwd)/plugin"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -40,5 +41,10 @@ git -C "$tree" push --quiet --set-upstream origin HEAD
 "$workforest" burn smoke --delete-branches
 test ! -e "$WORKFOREST_ROOT/smoke"
 
-cmp "$prefix/share/workforest/skills/workforest/SKILL.md" "$skill"
+cmp "$prefix/share/workforest/skills/workforest/SKILL.md" "$plugin/skills/workforest/SKILL.md"
+hook=$(PATH="$prefix/bin:$PATH" sh "$plugin/hooks/check-cli.sh")
+if [ -n "$hook" ]; then
+  echo "the session-start hook rejected the installed CLI: $hook" >&2
+  exit 1
+fi
 echo "smoke test passed"

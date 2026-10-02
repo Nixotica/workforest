@@ -54,6 +54,12 @@ As a Claude Code plugin, which follows the rolling releases:
 `#release` makes the marketplace follow the `release` branch, which only ever
 holds commits that passed CI. Without it, you follow `main`.
 
+The plugin checks for the CLI whenever a session starts. If the CLI is missing
+or too old, Claude Code says so as soon as the session opens, and Claude offers
+to install it in its first reply. A plugin installed mid-session isn't loaded
+until you run `/reload-plugins`, and reloading doesn't count as a session start.
+The first check comes in your next session, or when you run `/clear`.
+
 Claude Code leaves auto-update off for third-party marketplaces. To receive
 each release automatically, turn it on under `/plugin` → **Marketplaces** →
 workforest → **Enable auto-update**; otherwise run
