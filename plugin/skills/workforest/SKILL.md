@@ -96,6 +96,10 @@ forest you're standing in.
 Aliases: `plant`=`new`, `add`=`graft`, `remove`=`prune`, `burn`/`delete`=`rm`,
 `list`=`ls`, `st`=`status`, `dir`=`path`, `each`=`exec`.
 
+`wf` is a short name for `workforest` itself, which the Nix package installs.
+Users may type either; in commands you run, use `workforest`, which every
+install provides.
+
 Options:
 
 - `-f, --forest <name>` (`graft`, `prune`, `exec`) — target forest. Defaults to

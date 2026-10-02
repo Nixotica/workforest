@@ -54,6 +54,7 @@
               # this derivation; the dependency build stays cached across commits.
               WORKFOREST_VERSION = "${cargoToml.package.version} (${rev})";
               postInstall = ''
+                ln -s workforest "$out/bin/wf"
                 install -Dm644 ${./plugin/skills/workforest/SKILL.md} \
                   "$out/share/workforest/skills/workforest/SKILL.md"
               '';

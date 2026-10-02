@@ -87,6 +87,9 @@ For other agents, put the skill wherever they read skills from.
 | `workforest path [forest]` | print a forest's path |
 | `workforest exec [--] <cmd>...` | run a command in every tree, one tree at a time |
 
+`wf` is short for `workforest`: the Nix package installs it as a symlink. With
+cargo, add it yourself: `ln -s workforest ~/.cargo/bin/wf`.
+
 Inside a forest, commands act on that forest unless told otherwise. Every tree
 gets the branch named after its forest unless you pass `--branch`, and branches
 off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `prune`

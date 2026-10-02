@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Exercise an installed workforest the way a user would: plant a forest in a
 # throwaway set of repos, check that unlanded work blocks the burn, land it,
-# and burn the forest. Also checks that the package ships the skill.
+# and burn the forest. Also checks that `wf` runs the same binary and that the
+# package ships the skill.
 #
 # usage: ci/smoke.sh <prefix>   where <prefix>/bin/workforest is the install
 set -euo pipefail
 
 prefix=$(cd "${1:?usage: smoke.sh <install prefix>}" && pwd)
-wf="$prefix/bin/workforest"
+workforest="$prefix/bin/workforest"
 skill="$(cd "$(dirname "$0")/.." && pwd)/plugin/skills/workforest/SKILL.md"
 
 tmp=$(mktemp -d)
@@ -23,19 +24,20 @@ git -C "$tmp/seed" commit --quiet --allow-empty --message initial
 git clone --quiet --bare "$tmp/seed" "$tmp/origin.git"
 git clone --quiet "$tmp/origin.git" "$WORKFOREST_REPOS/demo"
 
-"$wf" --version
-"$wf" new smoke demo
-tree="$("$wf" path smoke)/demo"
+"$workforest" --version
+test "$("$prefix/bin/wf" --version)" = "$("$workforest" --version)"
+"$workforest" new smoke demo
+tree="$("$workforest" path smoke)/demo"
 echo change >"$tree/file"
-"$wf" status smoke | grep --quiet dirty
-if "$wf" rm smoke; then
+"$workforest" status smoke | grep --quiet dirty
+if "$workforest" rm smoke; then
   echo "rm burned a forest with uncommitted work" >&2
   exit 1
 fi
 git -C "$tree" add file
 git -C "$tree" commit --quiet --message change
 git -C "$tree" push --quiet --set-upstream origin HEAD
-"$wf" rm smoke --delete-branches
+"$workforest" rm smoke --delete-branches
 test ! -e "$WORKFOREST_ROOT/smoke"
 
 cmp "$prefix/share/workforest/skills/workforest/SKILL.md" "$skill"
