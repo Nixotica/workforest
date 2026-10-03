@@ -12,6 +12,8 @@ use tempfile::TempDir;
 
 use super::Sandbox;
 
+mod cargo;
+
 /// The default size from which cache files are hardlinked.
 const LINK_MIN: usize = 64 * 1024;
 
@@ -49,6 +51,20 @@ impl Sandbox {
 fn write(file: &Path, size: usize) {
     fs::create_dir_all(file.parent().unwrap()).expect("create a directory");
     fs::write(file, vec![b'x'; size]).expect("write a file");
+}
+
+/// The time `secs` seconds after the epoch.
+fn at(secs: u64) -> SystemTime {
+    SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+}
+
+/// Set the modification time of `file` to `secs` seconds after the epoch.
+fn set_modified(file: &Path, secs: u64) {
+    fs::File::options()
+        .write(true)
+        .open(file)
+        .and_then(|file| file.set_modified(at(secs)))
+        .unwrap_or_else(|err| panic!("{}: {err}", file.display()));
 }
 
 fn meta(file: &Path) -> fs::Metadata {
@@ -423,6 +439,45 @@ fn force_keeps_the_trees_cache_when_there_is_nothing_to_replace_it_with() {
 }
 
 #[test]
+fn a_later_graft_marks_the_trees_older_files_as_changed() {
+    let sb = Sandbox::new();
+    let repo = sb.cached_repo("api", "build clone\n");
+    sb.publish(&repo, ".gitignore", "/build\n*.log\n");
+    sb.ok(&sb.root, &["new", "later", "repos/api", "--no-cache"]);
+    let tree = sb.forest("later").join("api");
+    // The tree's files were checked out or edited before the main checkout's
+    // last build, all but one.
+    for file in [".workforest-cache", "notes.txt", "debug.log"] {
+        fs::write(tree.join(file), "x").unwrap();
+        set_modified(&tree.join(file), 1_000_000_000);
+    }
+    fs::write(tree.join("later.txt"), "x").unwrap();
+    set_modified(&tree.join("later.txt"), 1_500_000_000);
+    write(&repo.join("build/big"), LINK_MIN);
+    write(&repo.join("build/small"), 10);
+    set_modified(&repo.join("build/big"), 1_200_000_000);
+    set_modified(&repo.join("build/small"), 1_100_000_000);
+
+    let out = sb.ok(&tree, &["cache", "graft"]);
+
+    assert!(out.contains("older than it as changed"), "{out}");
+    let modified = |file: &str| meta(&tree.join(file)).modified().unwrap();
+    // Tracked, and untracked but not ignored: newer than the graft now, so
+    // that a build tool doesn't take the grafted output for built from them.
+    assert!(modified(".workforest-cache") > at(1_200_000_000));
+    assert!(modified("notes.txt") > at(1_200_000_000));
+    // Already newer, or ignored: left alone.
+    assert_eq!(modified("later.txt"), at(1_500_000_000));
+    assert_eq!(modified("debug.log"), at(1_000_000_000));
+    assert_eq!(modified("build/small"), at(1_100_000_000));
+
+    // Planting is newer than anything grafted, so nothing needs marking.
+    let out = sb.ok(&sb.root, &["new", "fresh", "repos/api"]);
+    assert!(out.contains("cache build: grafted"), "{out}");
+    assert!(!out.contains("as changed"), "{out}");
+}
+
+#[test]
 fn a_graft_is_staged_beside_the_cache_and_moved_into_place() {
     let sb = Sandbox::new();
     let repo = sb.cached_repo("api", "build clone\nout/deep clone\n");
@@ -561,7 +616,7 @@ fn doctor_needs_a_cache_a_build_command_and_a_build_that_works() {
 
     write(&repo.join("build/big"), LINK_MIN);
     let err = sb.fails(&sb.root, &["cache", "doctor", "repos/api"]);
-    assert!(err.contains("--cmd <CMD>"), "{err}");
+    assert!(err.contains("pass --cmd '<build command>'"), "{err}");
 
     let err = sb.fails(&sb.root, &["cache", "doctor", "repos/api", "--cmd", "true"]);
     assert!(

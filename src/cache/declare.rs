@@ -12,6 +12,7 @@
 //! ```
 //!
 //! Entries come in layers, each overriding the one before for the same path:
+//! the build systems workforest knows (see [`super::ecosystem`]), then
 //! `.workforest-cache` at the repo root, committed with the repo, then
 //! `workforest-cache` in the git common dir, which is machine-local.
 
@@ -19,7 +20,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path};
 
-use super::{Entry, Mode};
+use super::{Entry, Mode, ecosystem};
 use crate::forest::dir_name;
 use crate::git;
 
@@ -45,7 +46,11 @@ struct Line {
 
 /// The caches the repo whose main worktree is at `source` declares.
 pub fn declared(source: &Path) -> Declared {
-    let mut declared = Declared::default();
+    // The bottom layer, so there is nothing yet for it to override.
+    let mut declared = Declared {
+        entries: ecosystem::detected(source).map(|e| e.entry()).collect(),
+        warnings: Vec::new(),
+    };
     declared.read(source, &source.join(REPO_FILE));
     if let Some(common) = git::common_dir(source) {
         declared.read(source, &common.join(LOCAL_FILE));
@@ -99,6 +104,7 @@ impl Declared {
             mode: line.mode,
             always_copy,
             origin,
+            built_in: false,
         };
         match earlier {
             Some(earlier) => *earlier = entry,

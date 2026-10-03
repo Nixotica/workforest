@@ -22,6 +22,7 @@ use std::fs::{self, File, FileTimes, Metadata};
 use std::io;
 use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::Path;
+use std::time::SystemTime;
 
 use super::glob::Glob;
 use super::walk::walk;
@@ -37,6 +38,8 @@ pub struct Cloned {
     /// Symlinks whose absolute target is in the main checkout, so that a
     /// build writing through them changes it.
     pub links_to_main: u64,
+    /// The latest modification time of a file cloned, if any was.
+    pub newest: Option<SystemTime>,
 }
 
 /// Clone the directory `src`, in the main checkout at `main`, to `dst`, which
@@ -66,6 +69,7 @@ pub fn clone_dir(
             cloned.files += 1;
         } else if kind.is_file() {
             cloned.files += 1;
+            cloned.newest = cloned.newest.max(meta.modified().ok());
             let link = meta.len() >= link_min && !always_copy.iter().any(|glob| glob.matches(&rel));
             // Hardlinking fails once a file has as many links as the
             // filesystem allows; a copy is always safe.

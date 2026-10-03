@@ -1,7 +1,8 @@
 //! Build caches grafted into trees, so a new tree doesn't build from cold.
 //!
-//! A repo declares its cache directories (see [`declare`]). Each cache is
-//! grafted in one of two modes:
+//! A repo declares its cache directories (see [`declare`]), and some build
+//! systems' are known without a declaration (see [`ecosystem`]). Each cache
+//! is grafted in one of two modes:
 //!
 //! - `clone`: the main checkout's directory is cloned into the tree, large files
 //!   hardlinked and small ones copied (see [`clone`]).
@@ -10,15 +11,18 @@
 //! workforest only ever replaces or deletes a cache path that git ignores and
 //! tracks nothing under, so a mistaken declaration can't destroy source.
 
+mod cargo;
 mod clone;
 pub mod declare;
 pub mod doctor;
+mod ecosystem;
 mod glob;
 mod walk;
 
 use std::fmt;
-use std::fs;
+use std::fs::{self, File, FileTimes};
 use std::path::Path;
+use std::time::SystemTime;
 
 pub use declare::declared;
 
@@ -63,6 +67,8 @@ pub struct Entry {
     pub always_copy: Vec<String>,
     /// Where the entry was declared, for `cache paths`.
     pub origin: String,
+    /// Whether the entry is built in (see [`ecosystem`]) rather than declared.
+    pub built_in: bool,
 }
 
 /// Print each warning about a repo's declarations.
@@ -97,6 +103,9 @@ fn graft(
     force: bool,
 ) -> Result<Option<String>> {
     match entry.mode {
+        // Every repo of a build system gets its built-in entry, so the many
+        // without its cache, such as those that build elsewhere, pass quietly.
+        Mode::Clone if entry.built_in && !source.join(&entry.path).is_dir() => Ok(None),
         Mode::Clone => graft_clone(tree, source, entry, link_min, force).map(Some),
         Mode::Never => Ok(None),
     }
@@ -150,12 +159,28 @@ fn graft_clone(
         let _ = fs::remove_dir_all(&staged);
     }
     let cloned = grafted?;
+    // A tree planted just now is newer than anything grafted into it, but one
+    // planted or edited before the main checkout's last build is not.
+    let marked = match cloned.newest.map(|newest| mark_older_changed(tree, newest)) {
+        None => 0,
+        Some(Ok(marked)) => marked,
+        Some(Err(err)) => {
+            let _ = remove(tree, &entry.path);
+            bail!("{err}; dropped the graft, so that its output can't pass as fresh");
+        }
+    };
     let mut note = format!(
         "grafted from the main checkout: {}, {} hardlinked, {} copied",
         count(cloned.files, "file"),
         human_bytes(cloned.linked),
         human_bytes(cloned.copied)
     );
+    if marked > 0 {
+        note.push_str(&format!(
+            "; marked the tree's {} older than it as changed",
+            count(marked, "file")
+        ));
+    }
     if cloned.links_to_main > 0 {
         note.push_str(&format!(
             "; {} into the main checkout, so a build that writes through one changes it",
@@ -163,6 +188,36 @@ fn graft_clone(
         ));
     }
     Ok(note)
+}
+
+/// Mark as changed now each file of the tree at `tree` that git tracks or
+/// would track and that is no newer than `newest`, returning how many. Build
+/// tools take output newer than its sources for built from them, so output
+/// grafted from a build that came after the tree's checkout or edits would
+/// otherwise pass as fresh, though built from the main checkout's sources.
+fn mark_older_changed(tree: &Path, newest: SystemTime) -> Result<u64> {
+    let Some(files) = git::files(tree) else {
+        bail!("could not list the files of {}", tree.display());
+    };
+    let now = FileTimes::new().set_modified(SystemTime::now());
+    let mut marked = 0;
+    for file in files {
+        let path = tree.join(file);
+        // Only regular files: a symlink's target may be outside the tree, and
+        // a tracked file may have been deleted.
+        let Ok(meta) = path.symlink_metadata() else {
+            continue;
+        };
+        if !meta.is_file() || meta.modified().is_ok_and(|modified| modified > newest) {
+            continue;
+        }
+        // Setting explicit times needs ownership, not write access.
+        File::open(&path)
+            .and_then(|file| file.set_times(now))
+            .context(format!("could not mark {} as changed", path.display()))?;
+        marked += 1;
+    }
+    Ok(marked)
 }
 
 /// Where the cache at `path` is cloned before it is moved into place: beside

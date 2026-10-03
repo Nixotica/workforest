@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::time::Instant;
 
+use super::glob::Glob;
 use super::walk::walk;
-use super::{Entry, Mode, clone, count, declared, human_bytes, warn};
+use super::{Entry, Mode, clone, count, declared, ecosystem, human_bytes, warn};
 use crate::config::{self, Config};
 use crate::error::{Context, Result, bail};
 use crate::forest::dir_name;
@@ -32,7 +33,7 @@ const SCAN_MAX: u64 = 1024 * 1024;
 
 /// Test the `clone` caches of the repo whose main worktree is at `source` by
 /// building with `cmd`, a shell command, in a throwaway worktree.
-pub fn doctor(config: &Config, source: &Path, cmd: &str) -> Result<()> {
+pub fn doctor(config: &Config, source: &Path, cmd: Option<&str>) -> Result<()> {
     let link_min = config::link_min()?;
     let repo = dir_name(source);
     let declared = declared(source);
@@ -48,6 +49,10 @@ pub fn doctor(config: &Config, source: &Path, cmd: &str) -> Result<()> {
              checkout so there is something to graft"
         );
     }
+    // Without --cmd, build the way the repo's build system does.
+    let Some(cmd) = cmd.or_else(|| ecosystem::detected(source).next().map(|e| e.build)) else {
+        bail!("pass --cmd '<build command>' to say how {repo} builds");
+    };
 
     fs::create_dir_all(&config.forest_root)
         .context(format!("could not create {}", config.forest_root.display()))?;
@@ -129,7 +134,22 @@ pub fn doctor(config: &Config, source: &Path, cmd: &str) -> Result<()> {
         "  {:<20} unchanged: the build wrote nothing through a hardlink",
         "main checkout"
     );
-    let naming = naming_main(&scratch.dir, &grafted, source);
+    // Some files a build system leaves in its cache name the main checkout
+    // harmlessly, as long as they were grafted rather than written by the
+    // build.
+    let inert: Vec<(&str, Glob)> = ecosystem::detected(source)
+        .flat_map(|e| e.inert.iter().map(|&glob| (e.path, Glob::new(glob))))
+        .collect();
+    let is_inert = |path: &Path| {
+        scratch_before.contains_key(path)
+            && inert
+                .iter()
+                .any(|(cache, glob)| path.strip_prefix(cache).is_ok_and(|rel| glob.matches(rel)))
+    };
+    let naming: Vec<PathBuf> = naming_main(&scratch.dir, &grafted, source)
+        .into_iter()
+        .filter(|path| !is_inert(path))
+        .collect();
     if naming.is_empty() {
         println!(
             "  {:<20} no grafted file names the main checkout",

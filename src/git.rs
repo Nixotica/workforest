@@ -4,6 +4,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -196,6 +197,27 @@ pub fn ignores(dir: &Path, path: &str, as_dir: bool) -> bool {
 pub fn tracks(dir: &Path, path: &str) -> bool {
     let pathspec = format!(":(literal){path}");
     output(dir, ["ls-files", "--", &pathspec]).is_none_or(|files| !files.is_empty())
+}
+
+/// The files of the worktree at `dir` that git tracks, or would track if
+/// added: those it doesn't ignore. Paths are relative to `dir`.
+pub fn files(dir: &Path) -> Option<Vec<PathBuf>> {
+    let list = stdout(
+        dir,
+        [
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+    )?;
+    let files = list
+        .split(|&byte| byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| PathBuf::from(OsStr::from_bytes(path)))
+        .collect();
+    Some(files)
 }
 
 /// Whether the worktree at `dir` has uncommitted changes, if git can tell.

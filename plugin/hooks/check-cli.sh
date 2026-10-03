@@ -8,7 +8,7 @@
 
 # The oldest CLI the skill works with. Keep in step with "Before first use" in
 # skills/workforest/SKILL.md.
-required=0.3.0
+required=0.4.0
 
 # warn <message for the user> <context for Claude> <install|update|replace>
 #

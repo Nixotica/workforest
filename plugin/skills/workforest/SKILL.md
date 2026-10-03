@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.3.0 or later.
+This skill drives the `workforest` command-line tool, version 0.4.0 or later.
 Check that it is installed:
 
 ```sh
@@ -165,6 +165,14 @@ build    clone   *.lock,state/*
 | `clone` | the main checkout's directory, files of 64 KiB and up hardlinked, smaller ones copied — the default |
 | `never` | left cold |
 
+Cargo's `target/` needs no entry: a repo with a root `Cargo.toml` grafts it,
+always copying Cargo's lock files, fingerprints, dep-info, build-script results
+and docs. Dependencies stay warm; the workspace's own crates rebuild once. Most
+other ecosystems need no entry either. Go keeps its build cache outside the
+repo, where every worktree already shares it. uv, npm and pnpm keep global
+caches of downloaded packages, so a tree's install is fast, but its
+`node_modules` or `.venv` is its own: never graft those.
+
 The size split is a bet, not a guarantee. Build tools replace large artifacts
 wholesale, so sharing them is free; the files they rewrite in place
 (fingerprints, dep-info, timestamps, locks) are usually small and get private
@@ -175,8 +183,10 @@ then build over each other's output.
 
 A graft is a snapshot of the main checkout's cache, only as warm as its last
 build. Builds in the tree replace what they rebuild, so the tree drifts away
-from the main checkout without changing it. `workforest cache status` shows how
-much each tree still shares. workforest only touches cache paths that git
+from the main checkout without changing it. `cache graft` into a tree planted
+earlier sets the modification time of the tree's files older than the graft to
+now, so that its output can't pass as built from them. `workforest cache
+status` shows how much each tree still shares. workforest only touches cache paths that git
 ignores, and leaves a cache cold across filesystems.
 
 ### Earning a new entry
@@ -188,6 +198,8 @@ it:
 ```sh
 workforest cache doctor <repo path> --cmd '<build command>'
 ```
+
+(`--cmd` defaults to `cargo build --all-targets && cargo doc` in a cargo repo.)
 
 It grafts the cache into a throwaway worktree, builds there, and fails if the
 build wrote through to the main checkout's files, failed, or changed nothing
