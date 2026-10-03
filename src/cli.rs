@@ -13,6 +13,9 @@ const AFTER_HELP: &str = "\
 Repos are given as paths, absolute or relative to the current directory: `.` is
 the repo you're in. Forests live under $WORKFOREST_ROOT (default ~/.workforest).
 
+Planting a tree also grafts the build caches its repo declares in
+.workforest-cache; see `workforest help cache`.
+
 Examples:
   workforest new fix-login .                       one tree: the repo you're in
   workforest new auth-migration ~/code/api ~/code/web
@@ -52,6 +55,8 @@ pub enum Command {
     /// Print a forest's path
     #[command(visible_alias = "dir")]
     Path(ForestArg),
+    /// Manage the build caches grafted into trees
+    Cache(CacheArgs),
 }
 
 #[derive(Args)]
@@ -62,6 +67,8 @@ pub struct NewArgs {
     pub repos: Vec<String>,
     #[command(flatten)]
     pub branching: Branching,
+    #[command(flatten)]
+    pub caching: Caching,
 }
 
 #[derive(Args)]
@@ -73,6 +80,8 @@ pub struct PlantArgs {
     pub target: Target,
     #[command(flatten)]
     pub branching: Branching,
+    #[command(flatten)]
+    pub caching: Caching,
 }
 
 #[derive(Args)]
@@ -125,6 +134,14 @@ pub struct Branching {
     pub base: Option<String>,
 }
 
+/// Whether planted trees get their repos' build caches.
+#[derive(Args)]
+pub struct Caching {
+    /// Don't graft the repos' build caches into the new trees
+    #[arg(long)]
+    pub no_cache: bool,
+}
+
 /// How far removing a tree may go.
 #[derive(Args)]
 pub struct Removal {
@@ -135,4 +152,82 @@ pub struct Removal {
     /// Also delete the trees' branches from their repos
     #[arg(long)]
     pub delete_branches: bool,
+}
+
+const CACHE_AFTER_HELP: &str = "\
+A repo declares its cache directories in .workforest-cache at its root, or in
+workforest-cache in its git common dir, which is machine-local and overrides
+it. One cache per line: its path, a mode, and the globs of files to copy
+whatever their size, comma-separated, or - for none. # starts a comment:
+
+  # path   mode    always-copy globs
+  build    clone   *.lock,state/*
+  .venv    never
+
+  clone   graft the main checkout's directory: files of 64 KiB and up are
+          hardlinked, smaller ones copied (the default)
+  never   leave it cold
+
+workforest only replaces or deletes cache paths that git ignores. Before
+trusting a clone entry, test it with `workforest cache doctor`.
+
+Environment: WORKFOREST_CACHE_LINK_MIN (default 65536).";
+
+/// Build caches, grafted from each repo's main checkout so a new tree doesn't
+/// build from cold.
+#[derive(Args)]
+#[command(after_help = CACHE_AFTER_HELP)]
+pub struct CacheArgs {
+    #[command(subcommand)]
+    pub command: CacheCommand,
+}
+
+#[derive(Subcommand)]
+pub enum CacheCommand {
+    /// Show how much of each tree's caches is still hardlinked to the main checkout
+    #[command(visible_alias = "st")]
+    Status(ForestArg),
+    /// Graft caches into trees that are already planted
+    Graft(CacheGraftArgs),
+    /// Delete trees' grafted clone caches
+    Drop(CacheDropArgs),
+    /// Show the caches a repo declares, and where each declaration comes from
+    Paths(CachePathsArgs),
+    /// Test a repo's clone caches: graft them into a throwaway worktree, build
+    /// there, and check that the build wrote nothing through to the main checkout
+    Doctor(CacheDoctorArgs),
+}
+
+#[derive(Args)]
+pub struct CacheGraftArgs {
+    /// Trees to graft into, by name [default: every tree in the forest]
+    pub trees: Vec<String>,
+    #[command(flatten)]
+    pub target: Target,
+    /// Replace caches the trees already have
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Args)]
+pub struct CacheDropArgs {
+    /// Trees whose caches to drop, by name [default: every tree in the forest]
+    pub trees: Vec<String>,
+    #[command(flatten)]
+    pub target: Target,
+}
+
+#[derive(Args)]
+pub struct CachePathsArgs {
+    /// Path of the repo
+    pub repo: String,
+}
+
+#[derive(Args)]
+pub struct CacheDoctorArgs {
+    /// Path of the repo
+    pub repo: String,
+    /// Shell command that builds the repo, run in the throwaway worktree
+    #[arg(long)]
+    pub cmd: String,
 }

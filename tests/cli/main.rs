@@ -8,6 +8,8 @@ use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
+mod cache;
+
 /// A throwaway home holding a forest root, a repos root, and the remotes those
 /// repos were cloned from.
 struct Sandbox {
@@ -51,6 +53,7 @@ impl Sandbox {
             .env("GIT_COMMITTER_NAME", "Test")
             .env("GIT_COMMITTER_EMAIL", "test@example.com")
             .env("WORKFOREST_ROOT", self.forests())
+            .env_remove("WORKFOREST_CACHE_LINK_MIN")
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
     }

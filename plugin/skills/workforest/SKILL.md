@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.2.0 or later.
+This skill drives the `workforest` command-line tool, version 0.3.0 or later.
 Check that it is installed:
 
 ```sh
@@ -91,6 +91,7 @@ forest you're standing in.
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
+| `workforest cache <sub>` | build caches: `status`, `graft`, `drop`, `paths`, `doctor` |
 
 Aliases: `add`=`plant`, `remove`=`cut`, `rm`/`delete`=`burn`,
 `list`=`ls`, `st`=`status`, `dir`=`path`.
@@ -113,6 +114,7 @@ Options:
 - `--force` — on `cut`/`burn`, skip the safety checks for uncommitted changes
   and for commits that are neither pushed nor landed.
 - `--delete-branches` — on `cut`/`burn`, also delete the trees' branches.
+- `--no-cache` — on `new`/`plant`, don't graft the repos' build caches.
 
 Repos are always given as paths: absolute, or relative to the current
 directory, where `.` is the repo you're in. workforest assumes nothing about
@@ -121,7 +123,8 @@ pass absolute paths. When the user names a repo without saying where it is,
 find it or ask; don't guess.
 
 Environment: `WORKFOREST_ROOT` (default `~/.workforest`). Where this skill says
-`~/.workforest`, read that value if it is set.
+`~/.workforest`, read that value if it is set. `WORKFOREST_CACHE_LINK_MIN`
+(default `65536`) sets the size from which grafted cache files are hardlinked.
 
 ## Typical flow
 
@@ -143,6 +146,57 @@ workforest plant ~/code/docs                  # a third repo turned out to be in
 workforest status                             # what's dirty, what's ahead
 workforest burn auth-migration --delete-branches
 ```
+
+## Build caches
+
+`new` and `plant` graft each repo's build cache from its main checkout into
+the tree, so a new tree doesn't build from cold. A repo declares its caches in
+`.workforest-cache` at its root (committed) or `workforest-cache` in its git
+common dir (machine-local, and overrides the committed file path by path):
+
+```
+# path   mode    always-copy globs
+build    clone   *.lock,state/*
+.venv    never
+```
+
+| mode | meaning |
+| --- | --- |
+| `clone` | the main checkout's directory, files of 64 KiB and up hardlinked, smaller ones copied — the default |
+| `never` | left cold |
+
+The size split is a bet, not a guarantee. Build tools replace large artifacts
+wholesale, so sharing them is free; the files they rewrite in place
+(fingerprints, dep-info, timestamps, locks) are usually small and get private
+copies. A large file that is rewritten in place reaches the main checkout
+through its hardlink, so it needs an always-copy glob. Never point two trees at
+one build directory instead (a shared output dir): trees on different branches
+then build over each other's output.
+
+A graft is a snapshot of the main checkout's cache, only as warm as its last
+build. Builds in the tree replace what they rebuild, so the tree drifts away
+from the main checkout without changing it. `workforest cache status` shows how
+much each tree still shares. workforest only touches cache paths that git
+ignores, and leaves a cache cold across filesystems.
+
+### Earning a new entry
+
+`clone` is only safe for a cache that survives being moved to another path and
+whose large files are replaced rather than rewritten. Test that, don't assume
+it:
+
+```sh
+workforest cache doctor <repo path> --cmd '<build command>'
+```
+
+It grafts the cache into a throwaway worktree, builds there, and fails if the
+build wrote through to the main checkout's files, failed, or changed nothing
+in the grafted cache. Passing proves only the first: it can't tell whether the
+build in the tree read the main checkout's files. Read the files it lists as
+naming the main checkout's path, and don't add the entry if the build uses
+them. Known unsafe: a Python `.venv` (its scripts record the path they were
+created at), a CMake `build/` (`CMakeCache.txt` records the source directory),
+Gradle's in-project `.gradle/`.
 
 ## Burn the forest once its work has landed
 
@@ -195,6 +249,11 @@ directory that no longer exists; workforest then prints where to `cd`. Prefer
   `for t in "$(workforest path <forest>)"/*/; do git -C "$t" push -u origin HEAD; done`.
 - Deleting a forest leaves the branches alone unless `--delete-branches` is
   passed, so a burned forest can be started again on the same branch names.
+- Build caches are grafted automatically. Use `--no-cache` only when a
+  deliberately cold build is the point.
+- Never add a `clone` entry for a new kind of cache on the strength of it
+  looking path-independent. Run `workforest cache doctor` and let it fail: a
+  missing entry costs build time, a wrong one costs a correct build.
 - The manifest is plain TSV. If a tree gets out of sync (deleted by hand, say),
   `workforest status` shows it as `MISSING`, and `cut` cleans up the stale
   worktree registration.
