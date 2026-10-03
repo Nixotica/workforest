@@ -158,7 +158,7 @@ const CACHE_AFTER_HELP: &str = "\
 A repo declares its cache directories in .workforest-cache at its root, or in
 workforest-cache in its git common dir, which is machine-local and overrides
 it. One cache per line: its path, a mode, and the globs of files to copy
-whatever their size, comma-separated, or - for none:
+whatever their size, comma-separated, or - for none. # starts a comment:
 
   # path   mode    always-copy globs
   build    clone   *.lock,state/*
@@ -166,15 +166,12 @@ whatever their size, comma-separated, or - for none:
 
   clone   graft the main checkout's directory: files of 64 KiB and up are
           hardlinked, smaller ones copied (the default)
-  share   one directory under $WORKFOREST_CACHE, symlinked into every tree;
-          only for content-addressed caches
   never   leave it cold
 
 workforest only replaces or deletes cache paths that git ignores. Before
 trusting a clone entry, test it with `workforest cache doctor`.
 
-Environment: WORKFOREST_CACHE (default ~/.cache/workforest) and
-WORKFOREST_CACHE_LINK_MIN (default 65536).";
+Environment: WORKFOREST_CACHE_LINK_MIN (default 65536).";
 
 /// Build caches, grafted from each repo's main checkout so a new tree doesn't
 /// build from cold.
@@ -196,8 +193,8 @@ pub enum CacheCommand {
     Drop(CacheDropArgs),
     /// Show the caches a repo declares, and where each declaration comes from
     Paths(CachePathsArgs),
-    /// Test that a repo's clone caches survive grafting: graft them into a
-    /// throwaway worktree, build there, and check the main checkout's are untouched
+    /// Test a repo's clone caches: graft them into a throwaway worktree, build
+    /// there, and check that the build wrote nothing through to the main checkout
     Doctor(CacheDoctorArgs),
 }
 
@@ -232,5 +229,5 @@ pub struct CacheDoctorArgs {
     pub repo: String,
     /// Shell command that builds the repo, run in the throwaway worktree
     #[arg(long)]
-    pub cmd: Option<String>,
+    pub cmd: String,
 }

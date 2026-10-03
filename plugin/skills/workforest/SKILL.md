@@ -123,9 +123,8 @@ pass absolute paths. When the user names a repo without saying where it is,
 find it or ask; don't guess.
 
 Environment: `WORKFOREST_ROOT` (default `~/.workforest`). Where this skill says
-`~/.workforest`, read that value if it is set. `WORKFOREST_CACHE` (default
-`~/.cache/workforest`) and `WORKFOREST_CACHE_LINK_MIN` (default `65536`) tune
-build caches.
+`~/.workforest`, read that value if it is set. `WORKFOREST_CACHE_LINK_MIN`
+(default `65536`) sets the size from which grafted cache files are hardlinked.
 
 ## Typical flow
 
@@ -164,15 +163,15 @@ build    clone   *.lock,state/*
 | mode | meaning |
 | --- | --- |
 | `clone` | the main checkout's directory, files of 64 KiB and up hardlinked, smaller ones copied — the default |
-| `share` | one directory symlinked into every tree; only for content-addressed caches |
 | `never` | left cold |
 
-The size split is the safety property, not an optimisation. Build tools
-replace large artifacts wholesale, so sharing them is free; the files they
-rewrite in place (fingerprints, dep-info, timestamps, locks) are small and get
-private copies. Always-copy globs cover the large files that are rewritten in
-place. Never point two trees at one build directory instead (a shared output
-dir): trees on different branches then build over each other's output.
+The size split is a bet, not a guarantee. Build tools replace large artifacts
+wholesale, so sharing them is free; the files they rewrite in place
+(fingerprints, dep-info, timestamps, locks) are usually small and get private
+copies. A large file that is rewritten in place reaches the main checkout
+through its hardlink, so it needs an always-copy glob. Never point two trees at
+one build directory instead (a shared output dir): trees on different branches
+then build over each other's output.
 
 A graft is a snapshot of the main checkout's cache, only as warm as its last
 build. Builds in the tree replace what they rebuild, so the tree drifts away
@@ -190,11 +189,14 @@ it:
 workforest cache doctor <repo path> --cmd '<build command>'
 ```
 
-It grafts the cache into a throwaway worktree, builds there, and checks that
-the main checkout's files were not written through. Known unsafe: a Python
-`.venv` (its scripts record the path they were created at), a CMake `build/`
-(`CMakeCache.txt` records the source directory), Gradle's in-project
-`.gradle/`.
+It grafts the cache into a throwaway worktree, builds there, and fails if the
+build wrote through to the main checkout's files, failed, or changed nothing
+in the grafted cache. Passing proves only the first: it can't tell whether the
+build in the tree read the main checkout's files. Read the files it lists as
+naming the main checkout's path, and don't add the entry if the build uses
+them. Known unsafe: a Python `.venv` (its scripts record the path they were
+created at), a CMake `build/` (`CMakeCache.txt` records the source directory),
+Gradle's in-project `.gradle/`.
 
 ## Burn the forest once its work has landed
 

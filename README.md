@@ -136,23 +136,20 @@ build    clone   *.lock,state/*
 | mode | what each tree gets |
 | --- | --- |
 | `clone` (default) | the main checkout's directory, with files of 64 KiB and up hardlinked, costing no disk, and smaller files copied |
-| `share` | a symlink to one directory under `$WORKFOREST_CACHE` that every tree of the repo shares; only for content-addressed caches that tolerate several builds writing at once |
 | `never` | nothing; the cache starts cold |
 
-The size split is what makes `clone` safe. Build tools replace large artifacts
-wholesale when they rebuild them, so sharing those is free, while the files
-they rewrite in place (fingerprints, dep-info, timestamps, locks) are small and
-get private copies. List any large file that is rewritten in place as an
-always-copy glob: a glob containing `/` matches the path inside the cache at
-any depth, any other glob the file name, and `-` lists none. Copies keep their
-modification times, so a build tool still sees the tree's freshly checked-out
-sources as newer than the grafted output, and rebuilds what they changed.
-
-The split is a best guess, not a guarantee. A hardlink shares the file itself,
-so whatever a build rewrites in place rather than replacing reaches every
-checkout that shares it; small files are just where such state usually lives.
-A large file that is rewritten in place needs an always-copy glob, and `cache
-doctor` is how to find one.
+The size split is a bet on how build tools behave, not a guarantee. They
+replace large artifacts wholesale when they rebuild them, so sharing those is
+free, while the files they rewrite in place (fingerprints, dep-info,
+timestamps, locks) are usually small and get private copies. But a hardlink
+shares the file itself, so a large file that a build rewrites in place reaches
+every checkout that shares it. List each one as an always-copy glob, and use
+`cache doctor` to find them. A glob containing `/` matches the path inside the
+cache at any depth, any other glob the file name, and `-` lists none. `#`
+starts a comment anywhere on a line, so neither a path nor a glob can contain
+one. Copies keep their modification times, so a build tool still sees the
+tree's freshly checked-out sources as newer than the grafted output, and
+rebuilds what they changed.
 
 A grafted cache is a snapshot of the main checkout's when the tree was
 planted. A build replaces the large files it rebuilds rather than rewriting
@@ -163,10 +160,11 @@ only as warm as the main checkout's last build: one built long ago grafts
 fine, but leaves the tree more to rebuild.
 
 workforest only grafts into, replaces or deletes a cache path that git ignores
-and tracks nothing under, so a mistaken declaration can't touch source. A
-`share` symlink needs a `.gitignore` entry without a trailing slash, since git
-doesn't count a symlink as a directory. A cache whose main checkout is on
-another filesystem is left cold, since hardlinks can't cross filesystems.
+and tracks nothing under, so a mistaken declaration can't touch source. A cache
+whose main checkout is on another filesystem is left cold, since hardlinks
+can't cross filesystems. A graft is cloned beside the cache and moved into
+place, so an interrupted one never leaves half a cache behind, and `cache graft
+--force` only gives up a tree's cache once it has a new one to put there.
 
 Before trusting a `clone` entry, test it:
 
@@ -174,16 +172,22 @@ Before trusting a `clone` entry, test it:
 workforest cache doctor ~/code/api --cmd 'make'
 ```
 
-It grafts the caches into a throwaway worktree, builds there, and fails if any
-file in the main checkout's cache changed. Known to fail: a Python `.venv` (its
-scripts record the path they were created at), a CMake `build/`
+It grafts the caches into a throwaway worktree, builds there, and fails if the
+build wrote through a hardlink to the main checkout's cache, changing a file's
+contents, times or permissions. It also fails if the build failed or changed
+nothing in the grafted cache, since either proves nothing. It can't prove that
+a cache works at another path, which takes knowing what the build reads, so it
+lists the grafted files that name the main checkout's path: that is how a
+cache records where it was built. Known not to work at another path: a Python
+`.venv` (its scripts record the path they were created at), a CMake `build/`
 (`CMakeCache.txt` records the source directory), and Gradle's in-project
-`.gradle/`.
+`.gradle/`. An interrupted doctor leaves its scratch worktree, a `.doctor-*`
+directory under the forest root, until the next doctor of that repo removes it.
 
-`--no-cache` on `new` and `plant` skips the graft. `$WORKFOREST_CACHE`
-(default `$XDG_CACHE_HOME/workforest`, else `~/.cache/workforest`) holds
-`share` caches, and `$WORKFOREST_CACHE_LINK_MIN` (default `65536`) sets the
-size from which files are hardlinked.
+`--no-cache` on `new` and `plant` skips the graft, and
+`$WORKFOREST_CACHE_LINK_MIN` (default `65536`) sets the size from which files
+are hardlinked. On btrfs and XFS a copy shares its data until written, so it
+costs little disk either.
 
 ## Development
 

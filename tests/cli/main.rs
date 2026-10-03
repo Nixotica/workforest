@@ -53,9 +53,7 @@ impl Sandbox {
             .env("GIT_COMMITTER_NAME", "Test")
             .env("GIT_COMMITTER_EMAIL", "test@example.com")
             .env("WORKFOREST_ROOT", self.forests())
-            .env("WORKFOREST_CACHE", self.root.join("cache"))
             .env_remove("WORKFOREST_CACHE_LINK_MIN")
-            .env_remove("XDG_CACHE_HOME")
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
     }

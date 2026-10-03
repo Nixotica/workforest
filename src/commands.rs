@@ -8,9 +8,9 @@ use clap::CommandFactory;
 use crate::cache;
 use crate::cli::{
     Branching, BurnArgs, CacheCommand, CacheDoctorArgs, CacheDropArgs, CacheGraftArgs,
-    CachePathsArgs, Cli, Command, CutArgs, ForestArg, LsArgs, NewArgs, PlantArgs, Removal,
+    CachePathsArgs, Caching, Cli, Command, CutArgs, ForestArg, LsArgs, NewArgs, PlantArgs, Removal,
 };
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::error::{Context, Result, bail};
 use crate::forest::{Forest, Tree, cwd_is_within, dir_name};
 use crate::git;
@@ -52,30 +52,29 @@ pub fn run(cli: Cli) -> Result<()> {
 
 fn new(config: &Config, args: NewArgs) -> Result<()> {
     let sources = main_worktrees(&args.repos)?;
+    let graft = grafting(&args.caching)?;
     let forest = Forest::create(config, &args.forest)?;
     println!("new forest {} at {}", forest.name, forest.dir.display());
     if sources.is_empty() {
         return Ok(());
     }
-    plant_sources(
-        config,
-        &forest,
-        sources,
-        args.branching,
-        !args.caching.no_cache,
-    )
+    plant_sources(&forest, sources, args.branching, graft)
 }
 
 fn plant(config: &Config, args: PlantArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
     let sources = main_worktrees(&args.repos)?;
-    plant_sources(
-        config,
-        &forest,
-        sources,
-        args.branching,
-        !args.caching.no_cache,
-    )
+    let graft = grafting(&args.caching)?;
+    plant_sources(&forest, sources, args.branching, graft)
+}
+
+/// The size from which grafted cache files are hardlinked, or `None` if
+/// `--no-cache` says not to graft.
+fn grafting(caching: &Caching) -> Result<Option<u64>> {
+    if caching.no_cache {
+        return Ok(None);
+    }
+    config::link_min().map(Some)
 }
 
 /// The main worktree of each repo argument, all checked before anything changes.
@@ -83,14 +82,14 @@ fn main_worktrees(repos: &[String]) -> Result<Vec<PathBuf>> {
     repos.iter().map(|arg| git::main_worktree(arg)).collect()
 }
 
-/// Add a worktree of each repo to `forest`, all on the same branch, grafting
-/// the build caches each repo declares if `graft` says to.
+/// Add a worktree of each repo to `forest`, all on the same branch. Unless
+/// `graft` is `None`, graft the build caches each repo declares, hardlinking
+/// files of that many bytes and up.
 fn plant_sources(
-    config: &Config,
     forest: &Forest,
     sources: Vec<PathBuf>,
     branching: Branching,
-    graft: bool,
+    graft: Option<u64>,
 ) -> Result<()> {
     let branch = branching.branch.unwrap_or_else(|| forest.name.clone());
     for source in sources {
@@ -114,8 +113,8 @@ fn plant_sources(
             "planted {repo} -> {} (branch {branch}, off {base})",
             dir.display()
         );
-        if graft {
-            cache::graft_tree(config, &dir, &source, false);
+        if let Some(link_min) = graft {
+            cache::graft_tree(&dir, &source, link_min, false);
         }
     }
     Ok(())
@@ -340,28 +339,7 @@ fn cache_status(config: &Config, args: ForestArg) -> Result<()> {
         }
         println!("  {}", tree.repo);
         for entry in &declared.entries {
-            let path = dir.join(&entry.path);
-            let state = match entry.mode {
-                cache::Mode::Never => "never".to_owned(),
-                cache::Mode::Share => match path.read_link() {
-                    Ok(target) => format!("shared, {}", target.display()),
-                    Err(_) => "not linked".to_owned(),
-                },
-                cache::Mode::Clone if path.is_symlink() || !path.is_dir() => "cold".to_owned(),
-                cache::Mode::Clone => match cache::check_replaceable(&dir, &entry.path, true) {
-                    Err(err) => err.to_string(),
-                    Ok(()) => {
-                        let usage = cache::usage(&path);
-                        format!(
-                            "{} files, {} hardlinked, {} own",
-                            usage.files,
-                            cache::human_bytes(usage.shared),
-                            cache::human_bytes(usage.own)
-                        )
-                    }
-                },
-            };
-            println!("    {:<22} {state}", entry.path);
+            println!("    {:<22} {}", entry.path, cache::describe(&dir, entry));
         }
     }
     Ok(())
@@ -369,6 +347,7 @@ fn cache_status(config: &Config, args: ForestArg) -> Result<()> {
 
 fn cache_graft(config: &Config, args: CacheGraftArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
+    let link_min = config::link_min()?;
     for tree in selected_trees(&forest, &args.trees)? {
         let dir = forest.tree_dir(&tree.repo);
         if !dir.is_dir() {
@@ -376,7 +355,7 @@ fn cache_graft(config: &Config, args: CacheGraftArgs) -> Result<()> {
             continue;
         }
         println!("{}", tree.repo);
-        cache::graft_tree(config, &dir, &tree.source, args.force);
+        cache::graft_tree(&dir, &tree.source, link_min, args.force);
     }
     Ok(())
 }
@@ -425,21 +404,20 @@ fn cache_paths(args: CachePathsArgs) -> Result<()> {
 
 fn cache_doctor(config: &Config, args: CacheDoctorArgs) -> Result<()> {
     let source = git::main_worktree(&args.repo)?;
-    cache::doctor::doctor(config, &source, args.cmd.as_deref())
+    cache::doctor::doctor(config, &source, &args.cmd)
 }
 
 /// The trees in `forest` named by `names`, else all of them.
 fn selected_trees(forest: &Forest, names: &[String]) -> Result<Vec<Tree>> {
-    let trees = forest.trees()?;
     if names.is_empty() {
-        return Ok(trees);
+        return forest.trees();
     }
     names
         .iter()
         .map(|arg| {
             let repo = dir_name(Path::new(arg));
-            match trees.iter().find(|tree| tree.repo == repo) {
-                Some(tree) => Ok(tree.clone()),
+            match forest.tree(&repo)? {
+                Some(tree) => Ok(tree),
                 None => bail!("{repo} is not a tree in {}", forest.name),
             }
         })

@@ -149,17 +149,26 @@ fn symlinks_in_a_cache_are_copied_as_symlinks() {
     write(&build.join("big"), LINK_MIN);
     symlink("big", build.join("relative")).unwrap();
     symlink("/nowhere/at/all", build.join("dangling")).unwrap();
+    let inward = build.join("big");
+    symlink(&inward, build.join("inward")).unwrap();
 
-    sb.ok(&sb.root, &["new", "links", "repos/api"]);
+    let out = sb.ok(&sb.root, &["new", "links", "repos/api"]);
 
     let grafted = sb.forest("links").join("api/build");
-    for (link, target) in [("relative", "big"), ("dangling", "/nowhere/at/all")] {
+    for (link, target) in [
+        ("relative", Path::new("big")),
+        ("dangling", Path::new("/nowhere/at/all")),
+        ("inward", &inward),
+    ] {
         assert!(meta(&grafted.join(link)).is_symlink(), "{link}");
-        assert_eq!(
-            fs::read_link(grafted.join(link)).unwrap(),
-            Path::new(target)
-        );
+        assert_eq!(fs::read_link(grafted.join(link)).unwrap(), target);
     }
+    assert!(
+        out.contains(
+            "; 1 symlink into the main checkout, so a build that writes through one changes it"
+        ),
+        "{out}"
+    );
 }
 
 #[test]
@@ -178,10 +187,22 @@ fn the_size_from_which_files_are_hardlinked_is_configurable() {
     let grafted = sb.forest("low").join("api/build/medium");
     assert!(same_file(&repo.join("build/medium"), &grafted));
 
-    let bad = OsStr::new("lots");
-    let out = sb.workforest_with(&sb.root, &["ls"], &[("WORKFOREST_CACHE_LINK_MIN", bad)]);
+    // A bad value stops only the commands that graft, before they change
+    // anything.
+    let bad = [("WORKFOREST_CACHE_LINK_MIN", OsStr::new("lots"))];
+    let out = sb.workforest_with(&sb.root, &["new", "bad", "repos/api"], &bad);
     assert!(!out.status.success());
-    assert!(stderr(&out).contains("must be a number of bytes"));
+    assert!(stderr(&out).contains("must be a number of bytes, not 'lots'"));
+    assert!(!sb.forest("bad").exists());
+    for args in [
+        &["ls"][..],
+        &["new", "cold", "repos/api", "--no-cache"],
+        &["cache", "status", "cold"],
+        &["burn", "cold"],
+    ] {
+        let out = sb.workforest_with(&sb.root, args, &bad);
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+    }
 }
 
 /// A directory on a different filesystem from `root`, if there is one.
@@ -326,54 +347,6 @@ fn the_machine_local_declaration_overrides_the_repos_per_path() {
 }
 
 #[test]
-fn share_links_one_directory_into_every_tree_of_a_repo() {
-    let sb = Sandbox::new();
-    let repo = sb.cached_repo("api", "shared share\n");
-    sb.publish(&repo, ".gitignore", "/shared\n");
-
-    sb.ok(&sb.root, &["new", "one", "repos/api"]);
-    sb.ok(&sb.root, &["new", "two", "repos/api"]);
-
-    let one = sb.forest("one").join("api/shared");
-    let two = sb.forest("two").join("api/shared");
-    assert!(meta(&one).is_symlink() && meta(&two).is_symlink());
-    let target = fs::read_link(&one).unwrap();
-    assert_eq!(fs::read_link(&two).unwrap(), target);
-    assert!(
-        target.starts_with(sb.root.join("cache/share")),
-        "{target:?}"
-    );
-    fs::write(one.join("object"), "hello").unwrap();
-    assert_eq!(fs::read_to_string(two.join("object")).unwrap(), "hello");
-
-    assert!(sb.ok(&sb.root, &["status", "one"]).contains(" clean "));
-    sb.ok(&sb.root, &["burn", "one"]);
-    sb.ok(&sb.root, &["burn", "two"]);
-    assert_eq!(
-        fs::read_to_string(target.join("object")).unwrap(),
-        "hello",
-        "burning a tree keeps the shared cache"
-    );
-}
-
-#[test]
-fn share_needs_git_to_ignore_the_symlink_itself() {
-    let sb = Sandbox::new();
-    let repo = sb.cached_repo("api", "shared share\n");
-    sb.publish(&repo, ".gitignore", "/shared/\n");
-
-    let out = sb.workforest(&sb.root, &["new", "slash", "repos/api"]);
-
-    assert!(out.status.success(), "{}", stderr(&out));
-    assert!(
-        stderr(&out).contains("list it in .gitignore without a trailing slash"),
-        "{}",
-        stderr(&out)
-    );
-    assert!(!sb.forest("slash").join("api/shared").exists());
-}
-
-#[test]
 fn no_cache_and_never_leave_caches_cold() {
     let sb = Sandbox::new();
     let repo = sb.cached_repo("api", "build clone\n");
@@ -428,6 +401,55 @@ fn cache_graft_fills_planted_trees_and_force_regrafts() {
 }
 
 #[test]
+fn force_keeps_the_trees_cache_when_there_is_nothing_to_replace_it_with() {
+    let sb = Sandbox::new();
+    let repo = sb.cached_repo("api", "build clone\n");
+    write(&repo.join("build/big"), LINK_MIN);
+    sb.ok(&sb.root, &["new", "keep", "repos/api"]);
+    let tree = sb.forest("keep").join("api");
+    fs::write(tree.join("build/mine"), "built in the tree").unwrap();
+    fs::rename(repo.join("build"), repo.join("elsewhere")).unwrap();
+
+    let out = sb.ok(&tree, &["cache", "graft", "--force"]);
+
+    assert!(
+        out.contains("cache build: the main checkout has none; the tree keeps its own"),
+        "{out}"
+    );
+    assert_eq!(
+        fs::read_to_string(tree.join("build/mine")).unwrap(),
+        "built in the tree"
+    );
+}
+
+#[test]
+fn a_graft_is_staged_beside_the_cache_and_moved_into_place() {
+    let sb = Sandbox::new();
+    let repo = sb.cached_repo("api", "build clone\nout/deep clone\n");
+    sb.publish(&repo, ".gitignore", "/build\n/out\n");
+    write(&repo.join("build/big"), LINK_MIN);
+    write(&repo.join("out/deep/big"), LINK_MIN);
+    sb.ok(&sb.root, &["new", "staged", "repos/api", "--no-cache"]);
+    let tree = sb.forest("staged").join("api");
+    // What a graft interrupted halfway leaves behind.
+    write(&tree.join(".build.workforest-graft/half"), 10);
+    write(&tree.join("out/.deep.workforest-graft/half"), 10);
+
+    let out = sb.ok(&tree, &["cache", "graft"]);
+
+    assert!(out.contains("cache build: grafted"), "{out}");
+    assert!(out.contains("cache out/deep: grafted"), "{out}");
+    assert!(same_file(&repo.join("build/big"), &tree.join("build/big")));
+    assert!(same_file(
+        &repo.join("out/deep/big"),
+        &tree.join("out/deep/big")
+    ));
+    assert!(!tree.join(".build.workforest-graft").exists());
+    assert!(!tree.join("out/.deep.workforest-graft").exists());
+    assert!(sb.ok(&sb.root, &["status", "staged"]).contains(" clean "));
+}
+
+#[test]
 fn cache_status_reports_hardlinked_and_own_bytes_and_drop_deletes_clones() {
     let sb = Sandbox::new();
     let repo = sb.cached_repo("api", "build clone\n");
@@ -461,10 +483,45 @@ fn doctor_passes_a_build_that_replaces_cache_files() {
     );
 
     assert!(
-        out.contains("main checkout        intact: safe to clone"),
+        out.contains(
+            "main checkout        unchanged: the build wrote nothing through a hardlink\n"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("main checkout's path no grafted file names the main checkout\n"),
         "{out}"
     );
     assert_eq!(fs::read(repo.join("build/big")).unwrap().len(), LINK_MIN);
+    assert_no_scratch_worktree(&sb, &repo);
+}
+
+#[test]
+fn doctor_lists_grafted_files_that_name_the_main_checkout() {
+    let sb = Sandbox::new();
+    let repo = sb.cached_repo("api", "build clone\n");
+    // A configure step that records where the sources are, as CMake's cache
+    // or a virtualenv's scripts do.
+    write(&repo.join("build/big"), LINK_MIN);
+    fs::write(
+        repo.join("build/sources"),
+        repo.as_os_str().as_encoded_bytes(),
+    )
+    .unwrap();
+    let rebuild = "cp \"$(cat build/sources)/.gitignore\" build/copied";
+
+    let out = sb.ok(
+        &sb.root,
+        &["cache", "doctor", "repos/api", "--cmd", rebuild],
+    );
+
+    assert!(
+        out.contains(
+            "main checkout's path 1 file naming the main checkout: a build that reads one \
+             works on the main checkout's files, not the tree's\n    build/sources\n"
+        ),
+        "{out}"
+    );
     assert_no_scratch_worktree(&sb, &repo);
 }
 
@@ -474,26 +531,24 @@ fn doctor_catches_a_build_that_writes_through_a_hardlink() {
     let repo = sb.cached_repo("api", "build clone\n");
     write(&repo.join("build/big"), LINK_MIN);
 
-    let out = sb.workforest(
-        &sb.root,
-        &[
-            "cache",
-            "doctor",
-            "repos/api",
-            "--cmd",
-            "echo more >> build/big",
-        ],
-    );
+    for write_through in ["echo more >> build/big", "chmod 600 build/big"] {
+        let out = sb.workforest(
+            &sb.root,
+            &["cache", "doctor", "repos/api", "--cmd", write_through],
+        );
 
-    assert!(!out.status.success());
-    assert!(
-        stdout(&out)
-            .contains("1 file(s) CHANGED by the build in the scratch worktree:\n    build/big\n"),
-        "{}",
-        stdout(&out)
-    );
-    assert!(stderr(&out).contains("api's cache is not safe to clone as declared"));
-    assert_no_scratch_worktree(&sb, &repo);
+        assert!(!out.status.success(), "{write_through}");
+        assert!(
+            stdout(&out)
+                .contains("1 file CHANGED by the build in the scratch worktree:\n    build/big\n"),
+            "{write_through}: {}",
+            stdout(&out)
+        );
+        assert!(stderr(&out).contains("api's cache is not safe to clone as declared"));
+        assert_no_scratch_worktree(&sb, &repo);
+        fs::remove_file(repo.join("build/big")).unwrap();
+        write(&repo.join("build/big"), LINK_MIN);
+    }
 }
 
 #[test]
@@ -506,7 +561,13 @@ fn doctor_needs_a_cache_a_build_command_and_a_build_that_works() {
 
     write(&repo.join("build/big"), LINK_MIN);
     let err = sb.fails(&sb.root, &["cache", "doctor", "repos/api"]);
-    assert!(err.contains("pass --cmd '<build command>'"), "{err}");
+    assert!(err.contains("--cmd <CMD>"), "{err}");
+
+    let err = sb.fails(&sb.root, &["cache", "doctor", "repos/api", "--cmd", "true"]);
+    assert!(
+        err.contains("the build changed nothing in the grafted cache, so the check proves nothing"),
+        "{err}"
+    );
 
     let err = sb.fails(
         &sb.root,
@@ -515,6 +576,38 @@ fn doctor_needs_a_cache_a_build_command_and_a_build_that_works() {
     assert!(
         err.contains("the build failed, so the check proves nothing"),
         "{err}"
+    );
+    assert_no_scratch_worktree(&sb, &repo);
+}
+
+#[test]
+fn doctor_removes_the_scratch_worktree_an_interrupted_doctor_left() {
+    let sb = Sandbox::new();
+    let repo = sb.cached_repo("api", "build clone\n");
+    write(&repo.join("build/big"), LINK_MIN);
+    let mut gone = Command::new("true").spawn().unwrap();
+    gone.wait().unwrap();
+    let leftover = sb.forests().join(format!(".doctor-api-{}", gone.id()));
+    sb.git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "--detach",
+            leftover.to_str().unwrap(),
+        ],
+    );
+    let rebuild = "cp build/big build/new && mv build/new build/big";
+
+    let out = sb.ok(
+        &sb.root,
+        &["cache", "doctor", "repos/api", "--cmd", rebuild],
+    );
+
+    assert!(
+        out.contains("removing a scratch worktree an interrupted doctor left"),
+        "{out}"
     );
     assert_no_scratch_worktree(&sb, &repo);
 }

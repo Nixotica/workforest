@@ -7,41 +7,63 @@
 
 use std::path::Path;
 
-/// Whether the file at `rel`, a path inside a cache, matches `glob`.
-pub fn matches(glob: &str, rel: &Path) -> bool {
-    if glob.contains('/') {
-        let rel = rel.to_string_lossy();
-        wildcard(glob, &rel) || wildcard(&format!("*/{glob}"), &rel)
-    } else {
-        rel.file_name()
-            .is_some_and(|name| wildcard(glob, &name.to_string_lossy()))
+/// A glob, parsed once so that matching it against every file in a cache
+/// allocates nothing.
+pub struct Glob {
+    pattern: Vec<char>,
+    /// For a glob containing `/`, the pattern behind `*/`, which matches it
+    /// at any depth.
+    anywhere: Option<Vec<char>>,
+}
+
+impl Glob {
+    pub fn new(glob: &str) -> Glob {
+        Glob {
+            pattern: glob.chars().collect(),
+            anywhere: glob
+                .contains('/')
+                .then(|| format!("*/{glob}").chars().collect()),
+        }
+    }
+
+    /// Whether the file at `rel`, a path inside a cache, matches.
+    pub fn matches(&self, rel: &Path) -> bool {
+        match &self.anywhere {
+            Some(anywhere) => {
+                let rel = rel.to_string_lossy();
+                wildcard(&self.pattern, &rel) || wildcard(anywhere, &rel)
+            }
+            None => rel
+                .file_name()
+                .is_some_and(|name| wildcard(&self.pattern, &name.to_string_lossy())),
+        }
     }
 }
 
 /// Whether all of `text` matches `pattern`, where `*` matches any run of
 /// characters and `?` matches one.
-fn wildcard(pattern: &str, text: &str) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
-    let text: Vec<char> = text.chars().collect();
+fn wildcard(pattern: &[char], text: &str) -> bool {
+    // `p` indexes the pattern's characters, `t` the text's bytes.
     let (mut p, mut t) = (0, 0);
     // Where the last `*` was, and where in the text it started matching.
     let mut star: Option<(usize, usize)> = None;
-    while t < text.len() {
+    while let Some(c) = text[t..].chars().next() {
         match pattern.get(p) {
             Some('*') => {
                 star = Some((p, t));
                 p += 1;
             }
-            Some(&c) if c == '?' || c == text[t] => {
+            Some(&want) if want == '?' || want == c => {
                 p += 1;
-                t += 1;
+                t += c.len_utf8();
             }
             _ => match star {
                 // Let the last `*` swallow one more character and retry.
                 Some((star_p, star_t)) => {
-                    star = Some((star_p, star_t + 1));
+                    let swallowed = text[star_t..].chars().next().map_or(1, char::len_utf8);
+                    star = Some((star_p, star_t + swallowed));
                     p = star_p + 1;
-                    t = star_t + 1;
+                    t = star_t + swallowed;
                 }
                 None => return false,
             },
@@ -55,7 +77,11 @@ mod tests {
     use super::*;
 
     fn matches_path(glob: &str, rel: &str) -> bool {
-        matches(glob, Path::new(rel))
+        Glob::new(glob).matches(Path::new(rel))
+    }
+
+    fn wild(pattern: &str, text: &str) -> bool {
+        wildcard(&pattern.chars().collect::<Vec<_>>(), text)
     }
 
     #[test]
@@ -84,10 +110,17 @@ mod tests {
 
     #[test]
     fn stars_backtrack() {
-        assert!(wildcard("a*b*c", "a-b-b-c"));
-        assert!(wildcard("*", ""));
-        assert!(wildcard("**", "abc"));
-        assert!(!wildcard("a*b", "a-c"));
-        assert!(!wildcard("", "a"));
+        assert!(wild("a*b*c", "a-b-b-c"));
+        assert!(wild("*", ""));
+        assert!(wild("**", "abc"));
+        assert!(!wild("a*b", "a-c"));
+        assert!(!wild("", "a"));
+    }
+
+    #[test]
+    fn question_marks_and_stars_match_characters_not_bytes() {
+        assert!(wild("?.d", "é.d"));
+        assert!(wild("*é*", "café-x"));
+        assert!(!wild("??.d", "é.d"));
     }
 }
