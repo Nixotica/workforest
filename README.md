@@ -91,7 +91,7 @@ For other agents, put the skill wherever they read skills from.
 | `workforest cut <tree>...` | remove trees from a forest, by name (alias: `remove`) |
 | `workforest burn [forest]` | remove a forest and every tree in it (aliases: `rm`, `delete`) |
 | `workforest ls [forest]` | list forests, or the trees in one |
-| `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base |
+| `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
 
 `wf` is short for `workforest`: the Nix package installs it as a symlink. With

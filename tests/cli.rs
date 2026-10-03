@@ -413,7 +413,7 @@ fn status_reports_dirty_trees_commits_ahead_and_missing_trees() {
     let forest = sb.forest("st");
     assert!(
         sb.ok(&forest, &["status"])
-            .contains("clean  +0/-0 vs origin/main")
+            .contains("clean  +0/-0 vs origin/main\n")
     );
 
     sb.commit(&forest.join("api"), "work.txt");
@@ -421,10 +421,44 @@ fn status_reports_dirty_trees_commits_ahead_and_missing_trees() {
     fs::remove_dir_all(forest.join("web")).unwrap();
 
     let status = sb.ok(&sb.root, &["st", "st"]);
-    assert!(status.contains("dirty  +1/-0 vs origin/main"), "{status}");
+    assert!(
+        status.contains("dirty  +1/-0 vs origin/main, 1 unpushed\n"),
+        "{status}"
+    );
     assert!(
         status.contains(&format!("  {:<24} MISSING", "web")),
         "{status}"
+    );
+}
+
+#[test]
+fn status_says_whether_commits_ahead_of_the_base_are_pushed() {
+    let sb = Sandbox::new();
+    sb.repo("api");
+    sb.ok(&sb.root, &["new", "pr", "repos/api"]);
+    let tree = sb.forest("pr").join("api");
+    let status = || sb.ok(&sb.root, &["status", "pr"]);
+
+    // A planted branch tracks its base, which lacks the branch's commits.
+    sb.commit(&tree, "one.txt");
+    let tracking_base = status();
+    assert!(
+        tracking_base.contains("clean  +1/-0 vs origin/main, 1 unpushed\n"),
+        "{tracking_base}"
+    );
+
+    sb.git(&tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
+    let pushed = status();
+    assert!(
+        pushed.contains("clean  +1/-0 vs origin/main, pushed\n"),
+        "{pushed}"
+    );
+
+    sb.commit(&tree, "two.txt");
+    let one_more = status();
+    assert!(
+        one_more.contains("clean  +2/-0 vs origin/main, 1 unpushed\n"),
+        "{one_more}"
     );
 }
 
@@ -517,13 +551,18 @@ fn status_shows_squashed_and_rebased_work_as_landed() {
         sb.repo("api");
         let tree = sb.pull_request("pr", "api");
         let before = sb.ok(&sb.root, &["status", "pr"]);
-        assert!(before.contains("clean  +2/-0 vs origin/main"), "{before}");
+        assert!(
+            before.contains("clean  +2/-0 vs origin/main, pushed\n"),
+            "{before}"
+        );
 
         sb.merge_on_remote("api", "pr", merge);
         sb.git(&tree, &["fetch", "--quiet", "--prune"]);
 
+        // The pruned upstream doesn't matter once the work has landed.
         let after = sb.ok(&sb.root, &["status", "pr"]);
         assert!(after.contains("landed +2/-"), "{merge:?}: {after}");
+        assert!(!after.contains("pushed"), "{merge:?}: {after}");
     }
 }
 
@@ -583,6 +622,10 @@ fn burn_refuses_work_that_has_not_all_landed() {
         assert!(sb.forest(forest).join("api").is_dir(), "{forest}");
         let status = sb.ok(&sb.root, &["status", forest]);
         assert!(status.contains(&format!("clean  +{ahead}/-")), "{status}");
+        assert!(
+            status.contains(&format!(", {ahead} unpushed\n")),
+            "{status}"
+        );
     }
 }
 

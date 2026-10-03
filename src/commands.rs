@@ -204,6 +204,31 @@ fn ls(config: &Config, args: LsArgs) -> Result<()> {
     Ok(())
 }
 
+/// What `status` reports about a tree's working copy.
+#[derive(Clone, Copy)]
+enum TreeState {
+    /// Git could not say.
+    Unknown,
+    /// Uncommitted changes.
+    Dirty,
+    /// No uncommitted changes, and commits ahead of the base whose changes are
+    /// on it anyway: they were squashed or rebased onto it.
+    Landed,
+    /// No uncommitted changes.
+    Clean,
+}
+
+impl TreeState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "?",
+            Self::Dirty => "dirty",
+            Self::Landed => "landed",
+            Self::Clean => "clean",
+        }
+    }
+}
+
 fn status(config: &Config, args: ForestArg) -> Result<()> {
     let forest = Forest::resolve(config, args.forest.as_deref(), NAME_AS_ARGUMENT)?;
     println!("{}  {}", forest.name, forest.dir.display());
@@ -215,26 +240,47 @@ fn status(config: &Config, args: ForestArg) -> Result<()> {
         }
         let ahead = git::count(&dir, &format!("{}..HEAD", tree.base));
         let behind = git::count(&dir, &format!("HEAD..{}", tree.base));
-        // Commits ahead of the base whose changes are on it anyway were
-        // squashed or rebased onto it.
         let state = match git::is_dirty(&dir) {
-            Some(true) => "dirty",
+            Some(true) => TreeState::Dirty,
             Some(false) if ahead.is_some_and(|n| n > 0) && git::landed(&dir, &tree.base) => {
-                "landed"
+                TreeState::Landed
             }
-            Some(false) => "clean",
-            None => "?",
+            Some(false) => TreeState::Clean,
+            None => TreeState::Unknown,
+        };
+        // Landed work is safe to burn whether or not it was pushed.
+        let push = match ahead {
+            Some(ahead) if ahead > 0 && !matches!(state, TreeState::Landed) => {
+                format!(", {}", push_state(&dir, ahead))
+            }
+            _ => String::new(),
         };
         println!(
-            "  {:<24} {:<24} {state:<6} +{}/-{} vs {}",
+            "  {:<24} {:<24} {:<6} +{}/-{} vs {}{push}",
             tree.repo,
             tree.branch,
+            state.as_str(),
             count_or_unknown(ahead),
             count_or_unknown(behind),
             tree.base
         );
     }
     Ok(())
+}
+
+/// Whether the tree at `dir`, `ahead` commits ahead of its base, has them all
+/// on its upstream, else how many its upstream lacks. As `burn` sees it, none
+/// are pushed when the branch has no upstream.
+fn push_state(dir: &Path, ahead: u64) -> String {
+    let unpushed = if git::has_upstream(dir) {
+        git::count(dir, "@{upstream}..HEAD")
+    } else {
+        Some(ahead)
+    };
+    match unpushed {
+        Some(0) => "pushed".to_owned(),
+        unpushed => format!("{} unpushed", count_or_unknown(unpushed)),
+    }
 }
 
 fn path(config: &Config, args: ForestArg) -> Result<()> {

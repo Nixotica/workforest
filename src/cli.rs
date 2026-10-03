@@ -46,7 +46,7 @@ pub enum Command {
     /// List forests, or the trees in one
     #[command(visible_alias = "list")]
     Ls(LsArgs),
-    /// Show each tree's branch, whether it is dirty, and how far it is from its base
+    /// Show each tree's branch, whether it is dirty or pushed, and how far it is from its base
     #[command(visible_alias = "st")]
     Status(ForestArg),
     /// Print a forest's path

@@ -170,6 +170,12 @@ pub fn count(dir: &Path, range: &str) -> Option<u64> {
     output(dir, ["rev-list", "--count", range])?.parse().ok()
 }
 
+/// Whether the branch at `dir` has an upstream that git can resolve, which it
+/// stops having once a fetch prunes the remote branch it tracked.
+pub fn has_upstream(dir: &Path) -> bool {
+    succeeds(dir, ["rev-parse", "--abbrev-ref", "@{upstream}"])
+}
+
 /// Why deleting the tree at `dir` would lose work, if it would: uncommitted
 /// changes, or commits that its upstream (else `base`) lacks and that have not
 /// [`landed`] on `base`. Anything git cannot answer counts as a risk.
@@ -182,7 +188,7 @@ pub fn unlanded_work(dir: &Path, base: &str) -> Option<String> {
         Some(true) => return Some("uncommitted changes".to_owned()),
         None => return Some("a git status that could not be read".to_owned()),
     }
-    let risk = if succeeds(dir, ["rev-parse", "--abbrev-ref", "@{upstream}"]) {
+    let risk = if has_upstream(dir) {
         match count(dir, "@{upstream}..HEAD") {
             Some(0) => return None,
             Some(ahead) => format!("{ahead} unpushed commit(s), not landed on {base}"),

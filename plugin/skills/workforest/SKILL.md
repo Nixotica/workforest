@@ -89,7 +89,7 @@ forest you're standing in.
 | `workforest cut <tree>...` | remove trees from a forest, by name |
 | `workforest burn [forest]` | remove a forest and every tree in it |
 | `workforest ls [forest]` | list forests, or the trees in one |
-| `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base |
+| `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
 
 Aliases: `add`=`plant`, `remove`=`cut`, `rm`/`delete`=`burn`,
