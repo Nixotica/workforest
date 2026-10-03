@@ -138,6 +138,22 @@ build    clone   *.lock,state/*
 | `clone` (default) | the main checkout's directory, with files of 64 KiB and up hardlinked, costing no disk, and smaller files copied |
 | `never` | nothing; the cache starts cold |
 
+Cargo's `target` needs no declaration: a repo with a `Cargo.toml` at its root
+grafts it as `clone`. Its always-copy globs are a best guess at every file
+Cargo rewrites in place or locks: lock files, fingerprints, dep-info, and
+build scripts' results (`build/*/out/*`, `build/*/output` and the like), which
+build scripts rewrite when they rerun and which can be large. Dependencies stay
+warm in the tree, since Cargo keys their freshness on their version; the
+workspace's own crates rebuild once, since a fresh checkout's sources are newer
+than the grafted output. A declaration for `target` overrides the built-in
+entry, and keeps its globs unless it lists its own: `target never` leaves it
+cold. Don't point trees at a shared `CARGO_TARGET_DIR` instead: Cargo's
+artifact names don't include the workspace path, so trees on different
+branches would build over each other's output. Cargo's own cross-workspace
+build cache, a [2026 project goal](https://goals.rust-lang.org/2026/cargo-cross-workspace-cache.html),
+may make grafting `target` unnecessary; this is to be re-assessed when it
+lands.
+
 The size split is a bet on how build tools behave, not a guarantee. They
 replace large artifacts wholesale when they rebuild them, so sharing those is
 free, while the files they rewrite in place (fingerprints, dep-info,
@@ -175,14 +191,15 @@ Before trusting a `clone` entry, test it:
 workforest cache doctor ~/code/api --cmd 'make'
 ```
 
-It grafts the caches into a throwaway worktree, builds there, and fails if the
-build wrote through a hardlink to the main checkout's cache, changing a file's
-contents, times or permissions. It also fails if the build failed or changed
-nothing in the grafted cache, since either proves nothing. It can't prove that
-a cache works at another path, which takes knowing what the build reads, so it
-lists the grafted files that name the main checkout's path: that is how a
-cache records where it was built. Known not to work at another path: a Python
-`.venv` (its scripts record the path they were created at), a CMake `build/`
+`--cmd` defaults to `cargo build` in a cargo repo. The doctor grafts the caches
+into a throwaway worktree, builds there, and fails if the build wrote through a
+hardlink to the main checkout's cache, changing a file's contents, times or
+permissions. It also fails if the build failed or changed nothing in the
+grafted cache, since either proves nothing. It can't prove that a cache works
+at another path, which takes knowing what the build reads, so it lists the
+grafted files that name the main checkout's path: that is how a cache records
+where it was built. Known not to work at another path: a Python `.venv` (its
+scripts record the path they were created at), a CMake `build/`
 (`CMakeCache.txt` records the source directory), and Gradle's in-project
 `.gradle/`. An interrupted doctor leaves its scratch worktree, a `.doctor-*`
 directory under the forest root, until the next doctor of that repo removes it.

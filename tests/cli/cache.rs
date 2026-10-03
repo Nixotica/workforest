@@ -12,6 +12,8 @@ use tempfile::TempDir;
 
 use super::Sandbox;
 
+mod cargo;
+
 /// The default size from which cache files are hardlinked.
 const LINK_MIN: usize = 64 * 1024;
 
@@ -614,7 +616,7 @@ fn doctor_needs_a_cache_a_build_command_and_a_build_that_works() {
 
     write(&repo.join("build/big"), LINK_MIN);
     let err = sb.fails(&sb.root, &["cache", "doctor", "repos/api"]);
-    assert!(err.contains("--cmd <CMD>"), "{err}");
+    assert!(err.contains("pass --cmd '<build command>'"), "{err}");
 
     let err = sb.fails(&sb.root, &["cache", "doctor", "repos/api", "--cmd", "true"]);
     assert!(

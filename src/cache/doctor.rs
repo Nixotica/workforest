@@ -16,7 +16,7 @@ use std::process::{self, Command, Stdio};
 use std::time::Instant;
 
 use super::walk::walk;
-use super::{Entry, Mode, clone, count, declared, human_bytes, warn};
+use super::{Entry, Mode, clone, count, declared, ecosystem, human_bytes, warn};
 use crate::config::{self, Config};
 use crate::error::{Context, Result, bail};
 use crate::forest::dir_name;
@@ -32,7 +32,7 @@ const SCAN_MAX: u64 = 1024 * 1024;
 
 /// Test the `clone` caches of the repo whose main worktree is at `source` by
 /// building with `cmd`, a shell command, in a throwaway worktree.
-pub fn doctor(config: &Config, source: &Path, cmd: &str) -> Result<()> {
+pub fn doctor(config: &Config, source: &Path, cmd: Option<&str>) -> Result<()> {
     let link_min = config::link_min()?;
     let repo = dir_name(source);
     let declared = declared(source);
@@ -48,6 +48,13 @@ pub fn doctor(config: &Config, source: &Path, cmd: &str) -> Result<()> {
              checkout so there is something to graft"
         );
     }
+    // Without --cmd, build the way each detected build system does.
+    let builds: Vec<&str> = ecosystem::detected(source).map(|e| e.build).collect();
+    let cmd = match cmd {
+        Some(cmd) => cmd.to_owned(),
+        None if !builds.is_empty() => builds.join(" && "),
+        None => bail!("pass --cmd '<build command>' to say how {repo} builds"),
+    };
 
     fs::create_dir_all(&config.forest_root)
         .context(format!("could not create {}", config.forest_root.display()))?;
@@ -86,7 +93,7 @@ pub fn doctor(config: &Config, source: &Path, cmd: &str) -> Result<()> {
     let start = Instant::now();
     let status = Command::new("sh")
         .arg("-c")
-        .arg(cmd)
+        .arg(&cmd)
         .current_dir(&scratch.dir)
         .stdin(Stdio::null())
         .status()

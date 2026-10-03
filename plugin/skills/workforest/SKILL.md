@@ -165,6 +165,12 @@ build    clone   *.lock,state/*
 | `clone` | the main checkout's directory, files of 64 KiB and up hardlinked, smaller ones copied — the default |
 | `never` | left cold |
 
+Cargo's `target/` needs no entry: a repo with a root `Cargo.toml` grafts it,
+always copying Cargo's lock files, fingerprints, dep-info and build-script
+results. Dependencies stay warm; the workspace's own crates rebuild once. Most
+other ecosystems need no entry either: Go, uv, npm and pnpm keep global
+content-addressed caches that every worktree already shares.
+
 The size split is a bet, not a guarantee. Build tools replace large artifacts
 wholesale, so sharing them is free; the files they rewrite in place
 (fingerprints, dep-info, timestamps, locks) are usually small and get private
@@ -190,6 +196,8 @@ it:
 ```sh
 workforest cache doctor <repo path> --cmd '<build command>'
 ```
+
+(`--cmd` defaults to `cargo build` in a cargo repo.)
 
 It grafts the cache into a throwaway worktree, builds there, and fails if the
 build wrote through to the main checkout's files, failed, or changed nothing

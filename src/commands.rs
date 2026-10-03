@@ -404,7 +404,7 @@ fn cache_paths(args: CachePathsArgs) -> Result<()> {
 
 fn cache_doctor(config: &Config, args: CacheDoctorArgs) -> Result<()> {
     let source = git::main_worktree(&args.repo)?;
-    cache::doctor::doctor(config, &source, &args.cmd)
+    cache::doctor::doctor(config, &source, args.cmd.as_deref())
 }
 
 /// The trees in `forest` named by `names`, else all of them.

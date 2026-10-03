@@ -1,7 +1,8 @@
 //! Build caches grafted into trees, so a new tree doesn't build from cold.
 //!
-//! A repo declares its cache directories (see [`declare`]). Each cache is
-//! grafted in one of two modes:
+//! A repo declares its cache directories (see [`declare`]), and some build
+//! systems' are known without a declaration (see [`ecosystem`]). Each cache
+//! is grafted in one of two modes:
 //!
 //! - `clone`: the main checkout's directory is cloned into the tree, large files
 //!   hardlinked and small ones copied (see [`clone`]).
@@ -10,9 +11,11 @@
 //! workforest only ever replaces or deletes a cache path that git ignores and
 //! tracks nothing under, so a mistaken declaration can't destroy source.
 
+mod cargo;
 mod clone;
 pub mod declare;
 pub mod doctor;
+mod ecosystem;
 mod glob;
 mod walk;
 
