@@ -175,8 +175,10 @@ then build over each other's output.
 
 A graft is a snapshot of the main checkout's cache, only as warm as its last
 build. Builds in the tree replace what they rebuild, so the tree drifts away
-from the main checkout without changing it. `workforest cache status` shows how
-much each tree still shares. workforest only touches cache paths that git
+from the main checkout without changing it. `cache graft` into a tree planted
+earlier sets the modification time of the tree's files older than the graft to
+now, so that its output can't pass as built from them. `workforest cache
+status` shows how much each tree still shares. workforest only touches cache paths that git
 ignores, and leaves a cache cold across filesystems.
 
 ### Earning a new entry

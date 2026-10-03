@@ -149,7 +149,10 @@ cache at any depth, any other glob the file name, and `-` lists none. `#`
 starts a comment anywhere on a line, so neither a path nor a glob can contain
 one. Copies keep their modification times, so a build tool still sees the
 tree's freshly checked-out sources as newer than the grafted output, and
-rebuilds what they changed.
+rebuilds what they changed. A tree planted earlier may have files older than
+the main checkout's last build, so `cache graft` marks those as changed,
+setting their modification time to now: otherwise the grafted output would
+pass as built from them.
 
 A grafted cache is a snapshot of the main checkout's when the tree was
 planted. A build replaces the large files it rebuilds rather than rewriting
