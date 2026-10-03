@@ -93,6 +93,11 @@ For other agents, put the skill wherever they read skills from.
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
+| `workforest cache status [forest]` | per tree, how much of each build cache is still hardlinked to the main checkout |
+| `workforest cache graft [tree...]` | graft build caches into trees already planted (`--force` replaces them) |
+| `workforest cache drop [tree...]` | delete trees' grafted build caches |
+| `workforest cache paths <repo path>` | the build caches a repo declares, and where each is declared |
+| `workforest cache doctor <repo path>` | test that a repo's build caches are safe to graft |
 
 `wf` is short for `workforest`: the Nix package installs it as a symlink. With
 cargo, add it yourself: `ln -s workforest ~/.cargo/bin/wf`.
@@ -112,6 +117,73 @@ Repos are given as paths, absolute or relative to the current directory:
 nothing about where your repos live, so a bare name like `api` is rejected;
 #20 tracks naming repos after a one-time setup. Forests live under
 `$WORKFOREST_ROOT` (default `~/.workforest`).
+
+## Build caches
+
+A fresh tree has no build output, so its first build would start from cold.
+Instead, `new` and `plant` graft each repo's build cache from its main checkout
+into the tree. A repo declares its cache directories in `.workforest-cache` at
+its root, committed with it, or in `workforest-cache` in its git common dir
+(usually `.git/workforest-cache`), which is machine-local and overrides the
+committed file path by path:
+
+```
+# path   mode    always-copy globs
+build    clone   *.lock,state/*
+.venv    never
+```
+
+| mode | what each tree gets |
+| --- | --- |
+| `clone` (default) | the main checkout's directory, with files of 64 KiB and up hardlinked, costing no disk, and smaller files copied |
+| `share` | a symlink to one directory under `$WORKFOREST_CACHE` that every tree of the repo shares; only for content-addressed caches that tolerate several builds writing at once |
+| `never` | nothing; the cache starts cold |
+
+The size split is what makes `clone` safe. Build tools replace large artifacts
+wholesale when they rebuild them, so sharing those is free, while the files
+they rewrite in place (fingerprints, dep-info, timestamps, locks) are small and
+get private copies. List any large file that is rewritten in place as an
+always-copy glob: a glob containing `/` matches the path inside the cache at
+any depth, any other glob the file name, and `-` lists none. Copies keep their
+modification times, so a build tool still sees the tree's freshly checked-out
+sources as newer than the grafted output, and rebuilds what they changed.
+
+The split is a best guess, not a guarantee. A hardlink shares the file itself,
+so whatever a build rewrites in place rather than replacing reaches every
+checkout that shares it; small files are just where such state usually lives.
+A large file that is rewritten in place needs an always-copy glob, and `cache
+doctor` is how to find one.
+
+A grafted cache is a snapshot of the main checkout's when the tree was
+planted. A build replaces the large files it rebuilds rather than rewriting
+them, which is what `cache doctor` checks, so a build in either checkout breaks
+those files' hardlinks: the two drift apart without either changing the other;
+`workforest cache status` shows how much each tree still shares. The graft is
+only as warm as the main checkout's last build: one built long ago grafts
+fine, but leaves the tree more to rebuild.
+
+workforest only grafts into, replaces or deletes a cache path that git ignores
+and tracks nothing under, so a mistaken declaration can't touch source. A
+`share` symlink needs a `.gitignore` entry without a trailing slash, since git
+doesn't count a symlink as a directory. A cache whose main checkout is on
+another filesystem is left cold, since hardlinks can't cross filesystems.
+
+Before trusting a `clone` entry, test it:
+
+```sh
+workforest cache doctor ~/code/api --cmd 'make'
+```
+
+It grafts the caches into a throwaway worktree, builds there, and fails if any
+file in the main checkout's cache changed. Known to fail: a Python `.venv` (its
+scripts record the path they were created at), a CMake `build/`
+(`CMakeCache.txt` records the source directory), and Gradle's in-project
+`.gradle/`.
+
+`--no-cache` on `new` and `plant` skips the graft. `$WORKFOREST_CACHE`
+(default `$XDG_CACHE_HOME/workforest`, else `~/.cache/workforest`) holds
+`share` caches, and `$WORKFOREST_CACHE_LINK_MIN` (default `65536`) sets the
+size from which files are hardlinked.
 
 ## Development
 

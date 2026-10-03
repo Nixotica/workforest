@@ -140,6 +140,20 @@ pub fn add_worktree(repo: &Path, dest: &Path, branch: &str, base: &str) -> Resul
     run(repo, args)
 }
 
+/// Add a detached worktree of `repo` at `dest`, on the commit `repo` has
+/// checked out.
+pub fn add_detached_worktree(repo: &Path, dest: &Path) -> Result<()> {
+    let args = [
+        OsStr::new("worktree"),
+        OsStr::new("add"),
+        OsStr::new("--quiet"),
+        OsStr::new("--detach"),
+        dest.as_os_str(),
+        OsStr::new("HEAD"),
+    ];
+    run(repo, args)
+}
+
 /// Remove the worktree at `tree`; `force` discards whatever it holds.
 pub fn remove_worktree(repo: &Path, tree: &Path, force: bool) -> Result<()> {
     let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
@@ -158,6 +172,30 @@ pub fn prune_worktrees(repo: &Path) -> Result<()> {
 /// Delete a local branch, merged or not, reporting whether that worked.
 pub fn delete_branch(repo: &Path, branch: &str) -> bool {
     succeeds(repo, ["branch", "-D", branch])
+}
+
+/// The git common dir of the repo at `repo`: shared by all its worktrees, and
+/// where machine-local state such as `workforest-cache` lives.
+pub fn common_dir(repo: &Path) -> Option<PathBuf> {
+    output(repo, ["rev-parse", "--git-common-dir"]).map(|dir| repo.join(dir))
+}
+
+/// Whether git ignores `path` in the worktree at `dir`. `as_dir` asks about a
+/// directory at `path`, which need not exist yet, rather than a file or symlink.
+pub fn ignores(dir: &Path, path: &str, as_dir: bool) -> bool {
+    let path = if as_dir {
+        format!("{path}/")
+    } else {
+        path.to_owned()
+    };
+    succeeds(dir, ["check-ignore", "--quiet", "--", &path])
+}
+
+/// Whether git tracks anything at or under `path` in the worktree at `dir`.
+/// Anything git can't answer counts as tracked.
+pub fn tracks(dir: &Path, path: &str) -> bool {
+    let pathspec = format!(":(literal){path}");
+    output(dir, ["ls-files", "--", &pathspec]).is_none_or(|files| !files.is_empty())
 }
 
 /// Whether the worktree at `dir` has uncommitted changes, if git can tell.
