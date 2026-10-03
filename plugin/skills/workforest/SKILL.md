@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.1.0 or later.
+This skill drives the `workforest` command-line tool, version 0.2.0 or later.
 Check that it is installed:
 
 ```sh
@@ -89,7 +89,7 @@ forest you're standing in.
 | `workforest cut <tree>...` | remove trees from a forest, by name |
 | `workforest burn [forest]` | remove a forest and every tree in it |
 | `workforest ls [forest]` | list forests, or the trees in one |
-| `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
+| `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base |
 | `workforest path [forest]` | print a forest's path |
 
 Aliases: `add`=`plant`, `remove`=`cut`, `rm`/`delete`=`burn`,
@@ -111,7 +111,7 @@ Options:
 - `-B, --base <ref>` — what to branch off. Defaults to `origin/HEAD`, falling
   back to a local `main` or `master`.
 - `--force` — on `cut`/`burn`, skip the safety checks for uncommitted changes
-  and unpushed commits.
+  and for commits that are neither pushed nor landed.
 - `--delete-branches` — on `cut`/`burn`, also delete the trees' branches.
 
 Repos are always given as paths: absolute, or relative to the current
@@ -129,6 +129,7 @@ Environment: `WORKFOREST_ROOT` (default `~/.workforest`). Where this skill says
 workforest new fix-login ~/code/api           # single-repo forest — a normal case
 cd "$(workforest path fix-login)/api"
 # ...edit, commit, push, merge, then...
+git fetch                                     # burn checks the base as last fetched
 workforest burn fix-login
 ```
 
@@ -149,35 +150,30 @@ A forest is scaffolding for one piece of work. When that work is merged, burn
 it: a forest left standing keeps a checkout on disk, and `workforest ls` stops
 being a picture of what is really in flight.
 
-`burn` refuses to remove a tree with uncommitted changes, unpushed commits, or
-commits ahead of its base. That refusal means the work has not actually landed
-— say what would be lost and ask; do not reach for `--force` on the user's
-behalf.
+`burn` refuses to remove a tree with uncommitted changes, or with commits that
+are neither pushed nor landed on its base. Work has landed once everything its
+branch changed is on the base, so a regular, squash or rebase merge all count,
+whether or not the merged branch was deleted. `status` shows such a tree as
+`landed`.
+
+`burn` checks the base as this machine last fetched it, so fetch each tree's
+repo after merging, then burn:
+
+```sh
+for t in "$(workforest path <forest>)"/*/; do git -C "$t" fetch --quiet; done
+workforest burn <forest> --delete-branches
+```
+
+A refusal after fetching means some of the work is not on the base: commits
+made after the merge, a merge that took only part of the branch, or a merge
+since reverted. It also refuses when the base has since rewritten lines next to
+the branch's changes, since it can no longer tell. Show the user what differs
+(`git diff origin/<base> HEAD -- <files the branch changed>`) and ask; do not
+reach for `--force` on the user's behalf.
 
 Burning the forest you're standing in works, but leaves your shell in a
 directory that no longer exists; workforest then prints where to `cd`. Prefer
 `workforest burn <forest>` from outside the forest.
-
-### Landing a squash-merged branch
-
-A squash merge is never an ancestor of the branch it came from. A tree's new
-branch tracks its base, so once the work is squashed onto that base,
-`burn` still counts the branch's commits as not landed and refuses. Order the
-landing so the refusal never comes up:
-
-1. Push with `git push -u origin HEAD`, so the branch tracks its *own* remote
-   branch rather than the base it was created from.
-2. Merge without deleting the remote branch (for example
-   `gh pr merge <n> --squash`, without `--delete-branch`).
-3. Fetch, and confirm the work is on the base, path by path:
-   `git diff --quiet origin/<base> HEAD -- <changed files>`.
-4. `workforest burn <forest> --delete-branches`.
-5. Only then delete the remote branch: `git push origin --delete <branch>`.
-   Deleting it before the burn takes the upstream away and brings the refusal
-   back.
-
-If the remote branch is already gone — auto-deleted on merge — the refusal is
-expected; show the step 3 diff and ask before using `--force`.
 
 ## Guidance for Claude
 

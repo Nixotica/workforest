@@ -213,16 +213,25 @@ fn status(config: &Config, args: ForestArg) -> Result<()> {
             println!("  {:<24} MISSING", tree.repo);
             continue;
         }
+        let ahead = git::count(&dir, &format!("{}..HEAD", tree.base));
+        let behind = git::count(&dir, &format!("HEAD..{}", tree.base));
+        // Commits ahead of the base whose changes are on it anyway were
+        // squashed or rebased onto it.
         let state = match git::is_dirty(&dir) {
             Some(true) => "dirty",
+            Some(false) if ahead.is_some_and(|n| n > 0) && git::landed(&dir, &tree.base) => {
+                "landed"
+            }
             Some(false) => "clean",
             None => "?",
         };
-        let ahead = count_or_unknown(&dir, &format!("{}..HEAD", tree.base));
-        let behind = count_or_unknown(&dir, &format!("HEAD..{}", tree.base));
         println!(
-            "  {:<24} {:<24} {state:<6} +{ahead}/-{behind} vs {}",
-            tree.repo, tree.branch, tree.base
+            "  {:<24} {:<24} {state:<6} +{}/-{} vs {}",
+            tree.repo,
+            tree.branch,
+            count_or_unknown(ahead),
+            count_or_unknown(behind),
+            tree.base
         );
     }
     Ok(())
@@ -234,8 +243,8 @@ fn path(config: &Config, args: ForestArg) -> Result<()> {
     Ok(())
 }
 
-fn count_or_unknown(dir: &Path, range: &str) -> String {
-    git::count(dir, range).map_or_else(|| "?".to_owned(), |count| count.to_string())
+fn count_or_unknown(count: Option<u64>) -> String {
+    count.map_or_else(|| "?".to_owned(), |count| count.to_string())
 }
 
 /// The last component of `path`, which names a repo and its tree.

@@ -132,6 +132,78 @@ impl Sandbox {
         self.git(dir, &["add", file]);
         self.git(dir, &["commit", "--quiet", "--message", file]);
     }
+
+    /// A forest with one tree of `repo`, holding two commits pushed to a
+    /// branch of their own, as for a pull request.
+    fn pull_request(&self, forest: &str, repo: &str) -> PathBuf {
+        self.ok(&self.root, &["new", forest, &format!("repos/{repo}")]);
+        let tree = self.forest(forest).join(repo);
+        self.commit(&tree, &format!("{forest}-1.txt"));
+        self.commit(&tree, &format!("{forest}-2.txt"));
+        self.git(&tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
+        tree
+    }
+
+    /// A clone of `repo`'s remote standing in for a forge such as GitHub, on
+    /// `main` as the remote has it now.
+    fn forge(&self, repo: &str) -> PathBuf {
+        let forge = self.root.join("forge").join(repo);
+        if forge.exists() {
+            self.git(&forge, &["fetch", "--quiet", "origin"]);
+            self.git(
+                &forge,
+                &["checkout", "--quiet", "-B", "main", "origin/main"],
+            );
+        } else {
+            let remote = self.root.join("remotes").join(format!("{repo}.git"));
+            self.git(
+                &self.root,
+                &["clone", "--quiet", path(&remote), path(&forge)],
+            );
+        }
+        forge
+    }
+
+    /// Merge `branch` into `main` on `repo`'s remote the way a forge does,
+    /// after `main` has moved on, then delete the branch as forges do on merge.
+    fn merge_on_remote(&self, repo: &str, branch: &str, merge: Merge) {
+        let forge = self.forge(repo);
+        let theirs = format!("origin/{branch}");
+        self.commit(&forge, &format!("{branch}-meanwhile.txt"));
+        match merge {
+            Merge::Regular => {
+                self.git(
+                    &forge,
+                    &["merge", "--quiet", "--no-ff", "--no-edit", &theirs],
+                );
+            }
+            Merge::Squash => {
+                self.git(&forge, &["merge", "--quiet", "--squash", &theirs]);
+                self.git(&forge, &["commit", "--quiet", "--message", "squash"]);
+            }
+            Merge::Rebase => {
+                self.git(&forge, &["checkout", "--quiet", "-B", "landing", &theirs]);
+                self.git(&forge, &["rebase", "--quiet", "main"]);
+                self.git(&forge, &["checkout", "--quiet", "main"]);
+                self.git(&forge, &["merge", "--quiet", "--ff-only", "landing"]);
+            }
+        }
+        self.push_main_deleting(&forge, branch);
+    }
+
+    /// Push the forge's `main`, deleting `branch` from the remote.
+    fn push_main_deleting(&self, forge: &Path, branch: &str) {
+        let delete = format!(":{branch}");
+        self.git(forge, &["push", "--quiet", "origin", "main", &delete]);
+    }
+}
+
+/// How a forge merges a pull request.
+#[derive(Clone, Copy, Debug)]
+enum Merge {
+    Regular,
+    Squash,
+    Rebase,
 }
 
 fn path(path: &Path) -> &str {
@@ -394,7 +466,10 @@ fn cut_refuses_to_lose_work_unless_forced() {
     fs::remove_file(tree.join("scratch")).unwrap();
     sb.commit(&tree, "work.txt");
     let ahead = sb.fails(&forest, &["cut", "api"]);
-    assert!(ahead.contains("api has 1 unpushed commit(s)"), "{ahead}");
+    assert!(
+        ahead.contains("api has 1 unpushed commit(s), not landed on origin/main"),
+        "{ahead}"
+    );
 
     sb.ok(&forest, &["remove", "api", "--force", "--delete-branches"]);
     assert!(!tree.exists());
@@ -413,9 +488,138 @@ fn commits_ahead_of_a_local_base_are_not_pushed_anywhere() {
 
     let refusal = sb.fails(&sb.root, &["burn", "loc"]);
     assert!(
-        refusal.contains("api: 1 commit(s) not pushed anywhere"),
+        refusal.contains("api: 1 commit(s) not pushed anywhere or landed on main"),
         "{refusal}"
     );
+}
+
+#[test]
+fn burn_counts_merged_work_as_landed_however_it_was_merged() {
+    for merge in [Merge::Regular, Merge::Squash, Merge::Rebase] {
+        let sb = Sandbox::new();
+        let api = sb.repo("api");
+        let tree = sb.pull_request("pr", "api");
+
+        sb.merge_on_remote("api", "pr", merge);
+        sb.git(&tree, &["fetch", "--quiet", "--prune"]);
+
+        let out = sb.ok(&sb.root, &["burn", "pr", "--delete-branches"]);
+        assert!(out.contains("burned forest pr"), "{merge:?}: {out}");
+        assert!(!sb.forest("pr").exists(), "{merge:?}");
+        assert_eq!(sb.git(&api, &["branch", "--list", "pr"]), "", "{merge:?}");
+    }
+}
+
+#[test]
+fn status_shows_squashed_and_rebased_work_as_landed() {
+    for merge in [Merge::Squash, Merge::Rebase] {
+        let sb = Sandbox::new();
+        sb.repo("api");
+        let tree = sb.pull_request("pr", "api");
+        let before = sb.ok(&sb.root, &["status", "pr"]);
+        assert!(before.contains("clean  +2/-0 vs origin/main"), "{before}");
+
+        sb.merge_on_remote("api", "pr", merge);
+        sb.git(&tree, &["fetch", "--quiet", "--prune"]);
+
+        let after = sb.ok(&sb.root, &["status", "pr"]);
+        assert!(after.contains("landed +2/-"), "{merge:?}: {after}");
+    }
+}
+
+#[test]
+fn cut_counts_work_as_landed_once_the_base_is_fetched() {
+    let sb = Sandbox::new();
+    sb.repo("api");
+    sb.ok(&sb.root, &["new", "pr", "repos/api"]);
+    let forest = sb.forest("pr");
+    let tree = forest.join("api");
+    sb.commit(&tree, "work.txt");
+    // Pushed without -u, so the branch still tracks origin/main.
+    sb.git(&tree, &["push", "--quiet", "origin", "HEAD"]);
+    sb.merge_on_remote("api", "pr", Merge::Squash);
+
+    let stale = sb.fails(&forest, &["cut", "api"]);
+    assert!(
+        stale.contains("api has 1 unpushed commit(s), not landed on origin/main"),
+        "{stale}"
+    );
+    sb.git(&tree, &["fetch", "--quiet"]);
+    sb.ok(&forest, &["cut", "api"]);
+    assert!(!tree.exists());
+}
+
+#[test]
+fn burn_refuses_work_that_has_not_all_landed() {
+    let sb = Sandbox::new();
+    sb.repo("api");
+
+    // Only the first of the branch's two commits reached main.
+    let partial = sb.pull_request("partial", "api");
+    let forge = sb.forge("api");
+    sb.commit(&forge, "partial-meanwhile.txt");
+    sb.git(&forge, &["cherry-pick", "origin/partial~1"]);
+    sb.push_main_deleting(&forge, "partial");
+    sb.git(&partial, &["fetch", "--quiet", "--prune"]);
+
+    // Work committed after the merge.
+    let more = sb.pull_request("more", "api");
+    sb.merge_on_remote("api", "more", Merge::Squash);
+    sb.git(&more, &["fetch", "--quiet", "--prune"]);
+    sb.commit(&more, "more-3.txt");
+
+    // A merge that main has since reverted.
+    let reverted = sb.pull_request("reverted", "api");
+    sb.merge_on_remote("api", "reverted", Merge::Squash);
+    let forge = sb.forge("api");
+    sb.git(&forge, &["revert", "--no-edit", "HEAD"]);
+    sb.git(&forge, &["push", "--quiet", "origin", "main"]);
+    sb.git(&reverted, &["fetch", "--quiet", "--prune"]);
+
+    for (forest, ahead) in [("partial", 2), ("more", 3), ("reverted", 2)] {
+        let refusal = sb.fails(&sb.root, &["burn", forest]);
+        let risk = format!("  api: {ahead} commit(s) not pushed anywhere or landed on origin/main");
+        assert!(refusal.contains(&risk), "{forest}: {refusal}");
+        assert!(sb.forest(forest).join("api").is_dir(), "{forest}");
+        let status = sb.ok(&sb.root, &["status", forest]);
+        assert!(status.contains(&format!("clean  +{ahead}/-")), "{status}");
+    }
+}
+
+#[test]
+fn landed_work_survives_later_edits_elsewhere_in_the_same_file() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    let lines: String = (1..=30).map(|n| format!("{n}\n")).collect();
+    fs::write(api.join("lines"), lines).unwrap();
+    sb.git(&api, &["add", "lines"]);
+    sb.git(&api, &["commit", "--quiet", "--message", "lines"]);
+    sb.git(&api, &["push", "--quiet", "origin", "main"]);
+    let edit = |dir: &Path, from: &str, to: &str| {
+        let text = fs::read_to_string(dir.join("lines")).unwrap();
+        let text = text.replace(&format!("\n{from}\n"), &format!("\n{to}\n"));
+        fs::write(dir.join("lines"), text).unwrap();
+        sb.git(dir, &["commit", "--quiet", "--all", "--message", to]);
+    };
+
+    sb.ok(&sb.root, &["new", "pr", "repos/api"]);
+    let tree = sb.forest("pr").join("api");
+    edit(&tree, "2", "two");
+    // Not UTF-8, so the diff must be handled as bytes.
+    fs::write(tree.join("latin1"), b"caf\xe9\n").unwrap();
+    fs::write(tree.join("binary"), [0u8, 159, 146, 150]).unwrap();
+    sb.git(&tree, &["add", "latin1", "binary"]);
+    sb.git(&tree, &["commit", "--quiet", "--message", "bytes"]);
+    sb.git(&tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
+    sb.merge_on_remote("api", "pr", Merge::Squash);
+    let forge = sb.forge("api");
+    edit(&forge, "28", "twenty-eight");
+    sb.git(&forge, &["push", "--quiet", "origin", "main"]);
+    sb.git(&tree, &["fetch", "--quiet", "--prune"]);
+
+    let status = sb.ok(&sb.root, &["status", "pr"]);
+    assert!(status.contains("landed +2/-"), "{status}");
+    sb.ok(&sb.root, &["burn", "pr"]);
 }
 
 #[test]

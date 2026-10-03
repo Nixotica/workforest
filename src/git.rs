@@ -1,8 +1,12 @@
 //! Thin wrappers over the `git` command line.
 
+use std::env;
 use std::ffi::OsStr;
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{self, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::error::{Context, Result, bail};
 
@@ -12,17 +16,24 @@ fn git(dir: &Path) -> Command {
     command
 }
 
+/// The raw stdout of a git command that succeeded.
+fn stdout<I, S>(dir: &Path, args: I) -> Option<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let out = git(dir).args(args).stderr(Stdio::null()).output().ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
 /// The stdout of a git command that succeeded, without its trailing newline.
 pub fn output<I, S>(dir: &Path, args: I) -> Option<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let out = git(dir).args(args).stderr(Stdio::null()).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
+    let out = stdout(dir, args)?;
+    let text = String::from_utf8_lossy(&out);
     Some(text.trim_end_matches('\n').to_owned())
 }
 
@@ -160,8 +171,8 @@ pub fn count(dir: &Path, range: &str) -> Option<u64> {
 }
 
 /// Why deleting the tree at `dir` would lose work, if it would: uncommitted
-/// changes, commits its upstream lacks, or, with no upstream, commits `base`
-/// lacks. Anything git cannot answer counts as a risk.
+/// changes, or commits that its upstream (else `base`) lacks and that have not
+/// [`landed`] on `base`. Anything git cannot answer counts as a risk.
 pub fn unlanded_work(dir: &Path, base: &str) -> Option<String> {
     if !dir.is_dir() {
         return None;
@@ -171,16 +182,86 @@ pub fn unlanded_work(dir: &Path, base: &str) -> Option<String> {
         Some(true) => return Some("uncommitted changes".to_owned()),
         None => return Some("a git status that could not be read".to_owned()),
     }
-    if succeeds(dir, ["rev-parse", "--abbrev-ref", "@{upstream}"]) {
-        return match count(dir, "@{upstream}..HEAD") {
-            Some(0) => None,
-            Some(ahead) => Some(format!("{ahead} unpushed commit(s)")),
-            None => Some("commits that could not be compared with its upstream".to_owned()),
-        };
+    let risk = if succeeds(dir, ["rev-parse", "--abbrev-ref", "@{upstream}"]) {
+        match count(dir, "@{upstream}..HEAD") {
+            Some(0) => return None,
+            Some(ahead) => format!("{ahead} unpushed commit(s), not landed on {base}"),
+            None => "commits that could not be compared with its upstream".to_owned(),
+        }
+    } else {
+        match count(dir, &format!("{base}..HEAD")) {
+            Some(0) => return None,
+            Some(ahead) => format!("{ahead} commit(s) not pushed anywhere or landed on {base}"),
+            None => format!("commits that could not be compared with {base}"),
+        }
+    };
+    (!landed(dir, base)).then_some(risk)
+}
+
+/// Whether everything the branch at `dir` changed since it left `base` is
+/// already on `base`, as it is after a regular, squash or rebase merge: the
+/// branch's whole diff applies to `base` in reverse. The check runs against a
+/// throwaway index, so it checks nothing out and writes nothing to the repo.
+///
+/// Anything git cannot answer counts as not landed, and so does a base that has
+/// since changed lines next to the branch's changes, since a reverse apply needs
+/// each hunk's context to match exactly.
+pub fn landed(dir: &Path, base: &str) -> bool {
+    let Some(fork) = output(dir, ["merge-base", base, "HEAD"]) else {
+        return false;
+    };
+    let Some(patch) = stdout(dir, ["diff-tree", "-r", "-p", "--binary", &fork, "HEAD"]) else {
+        return false;
+    };
+    if patch.is_empty() {
+        return true;
     }
-    match count(dir, &format!("{base}..HEAD")) {
-        Some(0) => None,
-        Some(ahead) => Some(format!("{ahead} commit(s) not pushed anywhere")),
-        None => Some(format!("commits that could not be compared with {base}")),
+    let index = TempIndex::new();
+    let read = git(dir)
+        .env("GIT_INDEX_FILE", &index.0)
+        .args(["read-tree", base])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    read && applies_in_reverse(dir, &index.0, &patch)
+}
+
+/// Whether `patch` applies in reverse to the tree in `index`.
+fn applies_in_reverse(dir: &Path, index: &Path, patch: &[u8]) -> bool {
+    let apply = git(dir)
+        .env("GIT_INDEX_FILE", index)
+        .args(["apply", "--cached", "--check", "--reverse"])
+        .arg("--whitespace=nowarn")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut apply) = apply else {
+        return false;
+    };
+    // Dropping stdin once it is written ends the patch.
+    let fed = apply
+        .stdin
+        .take()
+        .is_some_and(|mut stdin| stdin.write_all(patch).is_ok());
+    apply.wait().is_ok_and(|status| status.success()) && fed
+}
+
+/// A path for a throwaway index file, removed when dropped.
+struct TempIndex(PathBuf);
+
+impl TempIndex {
+    fn new() -> TempIndex {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let name = format!("workforest-{}-{n}.index", process::id());
+        TempIndex(env::temp_dir().join(name))
+    }
+}
+
+impl Drop for TempIndex {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
     }
 }
