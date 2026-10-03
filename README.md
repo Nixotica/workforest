@@ -91,7 +91,7 @@ For other agents, put the skill wherever they read skills from.
 | `workforest cut <tree>...` | remove trees from a forest, by name (alias: `remove`) |
 | `workforest burn [forest]` | remove a forest and every tree in it (aliases: `rm`, `delete`) |
 | `workforest ls [forest]` | list forests, or the trees in one |
-| `workforest status [forest]` | per-tree branch, clean/dirty, ahead/behind its base |
+| `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
 
 `wf` is short for `workforest`: the Nix package installs it as a symlink. With
@@ -100,8 +100,12 @@ cargo, add it yourself: `ln -s workforest ~/.cargo/bin/wf`.
 Inside a forest, commands act on that forest unless told otherwise. Every tree
 gets the branch named after its forest unless you pass `--branch`, and branches
 off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `cut`
-and `burn` refuse to delete uncommitted changes or unpushed commits unless you
-pass `--force`. Run `workforest help <command>` for the details.
+and `burn` refuse to delete uncommitted changes, or commits that are neither
+pushed nor landed on the base, unless you pass `--force`. Work has landed once
+everything its branch changed is on the base, so a regular, squash or rebase
+merge all count, even after the merged branch is deleted. They check the base
+as you last fetched it: fetch after merging, then burn. Run
+`workforest help <command>` for the details.
 
 Repos are given as paths, absolute or relative to the current directory:
 `wf new fix-login .` starts a forest for the repo you're in. workforest assumes

@@ -46,7 +46,7 @@ pub enum Command {
     /// List forests, or the trees in one
     #[command(visible_alias = "list")]
     Ls(LsArgs),
-    /// Show each tree's branch, whether it is dirty, and how far it is from its base
+    /// Show each tree's branch, whether it is dirty or pushed, and how far it is from its base
     #[command(visible_alias = "st")]
     Status(ForestArg),
     /// Print a forest's path
@@ -128,7 +128,8 @@ pub struct Branching {
 /// How far removing a tree may go.
 #[derive(Args)]
 pub struct Removal {
-    /// Remove trees even if that loses uncommitted changes or unpushed commits
+    /// Remove trees even if that loses uncommitted changes, or commits that are
+    /// neither pushed nor landed on their base
     #[arg(long)]
     pub force: bool,
     /// Also delete the trees' branches from their repos
