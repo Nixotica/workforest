@@ -104,6 +104,7 @@ impl Declared {
             mode: line.mode,
             always_copy,
             origin,
+            built_in: false,
         };
         match earlier {
             Some(earlier) => *earlier = entry,

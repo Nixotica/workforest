@@ -228,7 +228,8 @@ pub struct CacheDoctorArgs {
     /// Path of the repo
     pub repo: String,
     /// Shell command that builds the repo, run in the throwaway worktree
-    /// [default: `cargo build` in a repo with a root Cargo.toml]
+    /// [default: `cargo build --all-targets && cargo doc` in a repo with a
+    /// root Cargo.toml]
     #[arg(long)]
     pub cmd: Option<String>,
 }

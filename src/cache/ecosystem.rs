@@ -1,9 +1,10 @@
 //! Build systems whose caches workforest grafts without being told.
 //!
 //! An ecosystem is recognized by a file at the repo root, and contributes one
-//! cache entry that the repo's declarations can override like any other. Each
-//! one is a best guess backed by `workforest cache doctor` runs on real repos:
-//! a missing entry costs build time, a wrong one costs a correct build.
+//! `clone` cache entry that the repo's declarations can override like any
+//! other. Each one is a best guess backed by `workforest cache doctor` runs on
+//! real repos: a missing entry costs build time, a wrong one costs a correct
+//! build.
 
 use std::path::Path;
 
@@ -16,10 +17,14 @@ pub struct Ecosystem {
     pub marker: &'static str,
     /// The cache directory, relative to the repo root.
     pub path: &'static str,
-    pub mode: Mode,
     /// Globs of files to copy whatever their size: the ones the build system
     /// rewrites in place, or locks.
     pub always_copy: &'static [&'static str],
+    /// Globs of files that name the checkout their cache was built in without
+    /// tying a build elsewhere to it, which `cache doctor` doesn't list for
+    /// naming the main checkout when they were grafted rather than written by
+    /// the build.
+    pub inert: &'static [&'static str],
     /// The shell command `cache doctor` builds with unless given `--cmd`.
     pub build: &'static str,
 }
@@ -32,13 +37,14 @@ impl Ecosystem {
     pub fn entry(&self) -> Entry {
         Entry {
             path: self.path.to_owned(),
-            mode: self.mode,
+            mode: Mode::Clone,
             always_copy: self
                 .always_copy
                 .iter()
                 .map(|&glob| glob.to_owned())
                 .collect(),
             origin: format!("built in ({})", self.name),
+            built_in: true,
         }
     }
 }

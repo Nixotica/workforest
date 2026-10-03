@@ -139,11 +139,16 @@ build    clone   *.lock,state/*
 | `never` | nothing; the cache starts cold |
 
 Cargo's `target` needs no declaration: a repo with a `Cargo.toml` at its root
-grafts it as `clone`. Its always-copy globs are a best guess at every file
-Cargo rewrites in place or locks: lock files, fingerprints, dep-info, and
-build scripts' results (`build/*/out/*`, `build/*/output` and the like), which
-build scripts rewrite when they rerun and which can be large. Dependencies stay
-warm in the tree, since Cargo keys their freshness on their version; the
+grafts it as `clone`, and says nothing when its main checkout has no `target`,
+as when it builds into a shared `CARGO_TARGET_DIR`. Its always-copy globs are a
+best guess at every file Cargo rewrites in place or locks: lock files,
+fingerprints, dep-info, `.rustc_info.json`, build scripts' results
+(`build/*/out/*`, `build/*/output` and the like), which build scripts rewrite
+when they rerun and which can be large, and `doc/`, whose static files and
+cross-crate indexes rustdoc rewrites. Every dependency's build-script output is
+copied, though only the workspace's own build scripts rerun in a tree, so
+crates that build C libraries can make a graft's copies large. Dependencies
+stay warm in the tree, since Cargo keys their freshness on their version; the
 workspace's own crates rebuild once, since a fresh checkout's sources are newer
 than the grafted output. A declaration for `target` overrides the built-in
 entry, and keeps its globs unless it lists its own: `target never` leaves it
@@ -191,14 +196,16 @@ Before trusting a `clone` entry, test it:
 workforest cache doctor ~/code/api --cmd 'make'
 ```
 
-`--cmd` defaults to `cargo build` in a cargo repo. The doctor grafts the caches
-into a throwaway worktree, builds there, and fails if the build wrote through a
-hardlink to the main checkout's cache, changing a file's contents, times or
-permissions. It also fails if the build failed or changed nothing in the
-grafted cache, since either proves nothing. It can't prove that a cache works
-at another path, which takes knowing what the build reads, so it lists the
-grafted files that name the main checkout's path: that is how a cache records
-where it was built. Known not to work at another path: a Python `.venv` (its
+In a cargo repo, `--cmd` defaults to `cargo build --all-targets && cargo doc`.
+The doctor grafts the caches into a throwaway worktree, builds there, and fails
+if the build wrote through a hardlink to the main checkout's cache, changing a
+file's contents, times or permissions. It also fails if the build failed or
+changed nothing in the grafted cache, since either proves nothing. It can't
+prove that a cache works at another path, which takes knowing what the build
+reads, so it lists the grafted files that name the main checkout's path: that
+is how a cache records where it was built. In a cargo repo it leaves out the
+files that name the main checkout without tying the tree's build to it: rustc's
+dep-info, build scripts' `root-output`, and superseded incremental sessions. Known not to work at another path: a Python `.venv` (its
 scripts record the path they were created at), a CMake `build/`
 (`CMakeCache.txt` records the source directory), and Gradle's in-project
 `.gradle/`. An interrupted doctor leaves its scratch worktree, a `.doctor-*`

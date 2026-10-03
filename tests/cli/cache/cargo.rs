@@ -102,19 +102,25 @@ impl Sandbox {
         command.env("CARGO_NET_OFFLINE", "true")
     }
 
-    /// Build `gen` in `dir`, then run it and return what it printed.
-    fn build_and_run(&self, dir: &Path) -> String {
+    /// Run `cargo` with `args` in `dir`, expecting success.
+    fn cargo(&self, dir: &Path, args: &[&str]) {
         let out = self
             .cargo_free(&mut Command::new("cargo"))
             .current_dir(dir)
-            .args(["build", "--quiet"])
+            .args(args)
+            .arg("--quiet")
             .output()
             .expect("run cargo");
         assert!(
             out.status.success(),
-            "cargo build failed:\n{}",
+            "cargo {args:?} failed:\n{}",
             stderr(&out)
         );
+    }
+
+    /// Build `gen` in `dir`, then run it and return what it printed.
+    fn build_and_run(&self, dir: &Path) -> String {
+        self.cargo(dir, &["build"]);
         let out = Command::new(dir.join("target/debug/gen"))
             .output()
             .expect("run gen");
@@ -147,6 +153,15 @@ fn have_cargo() -> bool {
     found
 }
 
+/// Whether `cargo <subcommand>` runs here: `clippy`, say, which a bare
+/// toolchain lacks.
+fn cargo_has(subcommand: &str) -> bool {
+    Command::new("cargo")
+        .args([subcommand, "--version"])
+        .output()
+        .is_ok_and(|out| out.status.success())
+}
+
 /// The file the build script generated in `checkout`.
 fn generated(checkout: &Path) -> PathBuf {
     let build = checkout.join("target/debug/build");
@@ -166,46 +181,66 @@ fn cargo_target_is_grafted_without_a_declaration() {
         &repo,
         &[(".gitignore", "/target\n"), ("Cargo.toml", MANIFEST)],
     );
-    let debug = repo.join("target/debug");
-    write(&debug.join(".cargo-lock"), 0);
+    let target = repo.join("target");
+    write(&target.join("debug/.cargo-lock"), 0);
     // Each large enough to be hardlinked by size alone; aws-lc-sys's build
     // script prints over 500 KB of `output`.
-    for file in [
-        "deps/libapi-0123.rlib",
-        "deps/api-0123.d",
-        ".fingerprint/api-0123/lib-api",
-        "build/api-4567/out/generated.rs",
-        "build/api-4567/output",
-        "incremental/api-89ab/s-cdef.lock",
-    ] {
-        write(&debug.join(file), LINK_MIN);
+    let private = [
+        "debug/deps/api-0123.d",
+        "debug/.fingerprint/api-0123/lib-api",
+        "debug/build/api-4567/out/generated.rs",
+        "debug/build/api-4567/output",
+        "debug/incremental/api-89ab/s-cdef.lock",
+        ".rustc_info.json",
+        "doc/static.files/search-0123.js",
+        "doc/trait.impl/core/marker/trait.Send.js",
+    ];
+    for file in private.iter().chain(&["debug/deps/libapi-0123.rlib"]) {
+        write(&target.join(file), LINK_MIN);
     }
 
     let out = sb.ok(&sb.root, &["new", "rusty", "repos/api"]);
 
     assert!(
-        out.contains("  cache target: grafted from the main checkout: 7 files"),
+        out.contains("  cache target: grafted from the main checkout: 10 files"),
         "{out}"
     );
-    let grafted = sb.forest("rusty").join("api/target/debug");
+    let grafted = sb.forest("rusty").join("api/target");
     assert!(same_file(
-        &debug.join("deps/libapi-0123.rlib"),
-        &grafted.join("deps/libapi-0123.rlib")
+        &target.join("debug/deps/libapi-0123.rlib"),
+        &grafted.join("debug/deps/libapi-0123.rlib")
     ));
-    for private in [
-        ".cargo-lock",
-        "deps/api-0123.d",
-        ".fingerprint/api-0123/lib-api",
-        "build/api-4567/out/generated.rs",
-        "build/api-4567/output",
-        "incremental/api-89ab/s-cdef.lock",
-    ] {
+    for file in private.iter().chain(&["debug/.cargo-lock"]) {
         assert!(
-            !same_file(&debug.join(private), &grafted.join(private)),
-            "{private} should be the tree's own"
+            !same_file(&target.join(file), &grafted.join(file)),
+            "{file} should be the tree's own"
         );
-        assert_eq!(meta(&grafted.join(private)).nlink(), 1);
+        assert_eq!(meta(&grafted.join(file)).nlink(), 1);
     }
+}
+
+#[test]
+fn a_cargo_repo_whose_main_checkout_has_no_target_is_passed_quietly() {
+    let sb = Sandbox::new();
+    let repo = sb.repo("api");
+    sb.publish_all(
+        &repo,
+        &[(".gitignore", "/target\n"), ("Cargo.toml", MANIFEST)],
+    );
+
+    let out = sb.workforest(&sb.root, &["new", "quiet", "repos/api"]);
+
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("cache"), "{}", stdout(&out));
+    assert!(stderr(&out).is_empty(), "{}", stderr(&out));
+
+    // A declared cache the main checkout lacks is still worth a line.
+    fs::write(repo.join(".git/workforest-cache"), "target clone\n").unwrap();
+    let out = sb.ok(&sb.root, &["new", "declared", "repos/api"]);
+    assert!(
+        out.contains("cache target: the main checkout has none; starting cold"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -287,6 +322,29 @@ fn a_tree_rebuilds_what_its_sources_changed_instead_of_trusting_the_graft() {
 }
 
 #[test]
+fn a_later_graft_cannot_pass_the_main_checkouts_output_off_as_the_trees() {
+    if !have_cargo() {
+        return;
+    }
+    let sb = Sandbox::new();
+    let repo = sb.cargo_repo("A");
+    sb.ok(&sb.root, &["new", "later", "repos/gen", "--no-cache"]);
+    let tree = sb.forest("later").join("gen");
+    // After the tree is planted, the main checkout's sources change and it
+    // builds, so its output is newer than the tree's sources.
+    fs::write(repo.join("data.txt"), "M").unwrap();
+    assert_eq!(sb.build_and_run(&repo), "M");
+
+    sb.ok(&tree, &["cache", "graft"]);
+
+    assert_eq!(
+        sb.build_and_run(&tree),
+        "A",
+        "the tree ran output built from the main checkout's sources"
+    );
+}
+
+#[test]
 fn build_scripts_rewriting_their_output_leave_the_main_checkout_alone() {
     if !have_cargo() {
         return;
@@ -333,10 +391,82 @@ fn doctor_builds_cargo_repos_with_cargo_by_default() {
 
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     let report = stdout(&out);
-    assert!(report.contains("building: cargo build\n"), "{report}");
+    assert!(
+        report.contains("building: cargo build --all-targets && cargo doc\n"),
+        "{report}"
+    );
+    // Not rustc's superseded incremental sessions, which name the main
+    // checkout but go unread.
+    assert!(
+        report.contains("main checkout's path no grafted file names the main checkout\n"),
+        "{report}"
+    );
+
+    // What the build writes there is listed all the same.
+    let build = format!(
+        "cargo build && mkdir -p target/debug/incremental/later \
+         && printf %s '{}' > target/debug/incremental/later/naming.o",
+        repo.display()
+    );
+    let out = sb.workforest_for_cargo(&["cache", "doctor", "repos/gen", "--cmd", &build], &[]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let report = stdout(&out);
+    assert!(
+        report.contains("1 file naming the main checkout")
+            && report.contains("    target/debug/incremental/later/naming.o\n"),
+        "{report}"
+    );
     assert!(
         report
             .contains("main checkout        unchanged: the build wrote nothing through a hardlink"),
+        "{report}"
+    );
+}
+
+#[test]
+fn doctor_leaves_out_what_cargo_records_of_the_main_checkout_harmlessly() {
+    if !have_cargo() {
+        return;
+    }
+    let sb = Sandbox::new();
+    // A dependency outside the repo, with a build script, that the tree
+    // doesn't rebuild, as it wouldn't a registry crate: its dep-info and its
+    // build script's `root-output` keep naming the main checkout.
+    let shared = sb.root.join("shared");
+    for (file, contents) in [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"shared\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        ),
+        ("build.rs", "fn main() {}\n"),
+        ("src/lib.rs", "pub const SHARED: u8 = 1;\n"),
+    ] {
+        fs::create_dir_all(shared.join(file).parent().unwrap()).unwrap();
+        fs::write(shared.join(file), contents).unwrap();
+    }
+    let repo = sb.repo("gen");
+    let manifest = format!(
+        "{MANIFEST}\n[dependencies]\nshared = {{ path = {:?} }}\n",
+        shared.display().to_string()
+    );
+    sb.publish_all(
+        &repo,
+        &[
+            (".gitignore", "/target\n/Cargo.lock\n"),
+            ("Cargo.toml", &manifest),
+            ("build.rs", BUILD_SCRIPT),
+            ("src/main.rs", MAIN),
+            ("data.txt", "A"),
+        ],
+    );
+    assert_eq!(sb.build_and_run(&repo), "A");
+
+    let out = sb.workforest_for_cargo(&["cache", "doctor", "repos/gen"], &[]);
+
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let report = stdout(&out);
+    assert!(
+        report.contains("main checkout's path no grafted file names the main checkout\n"),
         "{report}"
     );
 }
@@ -349,15 +479,22 @@ fn cargos_globs_keep_the_main_checkout_safe_with_everything_else_hardlinked() {
     let sb = Sandbox::new();
     let repo = sb.cargo_repo("A");
     sb.build_and_run(&repo);
-    // A fresh build, a build-script rerun, and a rebuild after an edit, with
-    // every file the globs don't name hardlinked, small ones included. Any
-    // file Cargo rewrites in place that the globs miss changes the main
-    // checkout, and the doctor fails.
-    let build = "cargo build && echo B > data.txt && cargo build \
-                 && echo '// edit' >> src/main.rs && cargo build";
+    sb.cargo(&repo, &["doc"]);
+    // A fresh build, a build-script rerun, a rebuild after an edit, docs, and
+    // clippy taking turns with a build, with every file the globs don't name
+    // hardlinked, small ones included. Any file Cargo rewrites in place that
+    // the globs miss changes the main checkout, and the doctor fails.
+    let mut build = "cargo build && echo B > data.txt && cargo build \
+                     && echo '// edit' >> src/main.rs && cargo build && cargo doc"
+        .to_owned();
+    if cargo_has("clippy") {
+        build.push_str(" && cargo clippy && cargo build");
+    } else {
+        eprintln!("not testing clippy: cargo has no clippy here");
+    }
 
     let out = sb.workforest_for_cargo(
-        &["cache", "doctor", "repos/gen", "--cmd", build],
+        &["cache", "doctor", "repos/gen", "--cmd", &build],
         &[("WORKFOREST_CACHE_LINK_MIN", "0")],
     );
 

@@ -67,6 +67,8 @@ pub struct Entry {
     pub always_copy: Vec<String>,
     /// Where the entry was declared, for `cache paths`.
     pub origin: String,
+    /// Whether the entry is built in (see [`ecosystem`]) rather than declared.
+    pub built_in: bool,
 }
 
 /// Print each warning about a repo's declarations.
@@ -101,6 +103,9 @@ fn graft(
     force: bool,
 ) -> Result<Option<String>> {
     match entry.mode {
+        // Every repo of a build system gets its built-in entry, so the many
+        // without its cache, such as those that build elsewhere, pass quietly.
+        Mode::Clone if entry.built_in && !source.join(&entry.path).is_dir() => Ok(None),
         Mode::Clone => graft_clone(tree, source, entry, link_min, force).map(Some),
         Mode::Never => Ok(None),
     }

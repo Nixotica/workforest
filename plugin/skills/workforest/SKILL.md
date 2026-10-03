@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.3.0 or later.
+This skill drives the `workforest` command-line tool, version 0.4.0 or later.
 Check that it is installed:
 
 ```sh
@@ -166,10 +166,12 @@ build    clone   *.lock,state/*
 | `never` | left cold |
 
 Cargo's `target/` needs no entry: a repo with a root `Cargo.toml` grafts it,
-always copying Cargo's lock files, fingerprints, dep-info and build-script
-results. Dependencies stay warm; the workspace's own crates rebuild once. Most
-other ecosystems need no entry either: Go, uv, npm and pnpm keep global
-content-addressed caches that every worktree already shares.
+always copying Cargo's lock files, fingerprints, dep-info, build-script results
+and docs. Dependencies stay warm; the workspace's own crates rebuild once. Most
+other ecosystems need no entry either. Go keeps its build cache outside the
+repo, where every worktree already shares it. uv, npm and pnpm keep global
+caches of downloaded packages, so a tree's install is fast, but its
+`node_modules` or `.venv` is its own: never graft those.
 
 The size split is a bet, not a guarantee. Build tools replace large artifacts
 wholesale, so sharing them is free; the files they rewrite in place
@@ -197,7 +199,7 @@ it:
 workforest cache doctor <repo path> --cmd '<build command>'
 ```
 
-(`--cmd` defaults to `cargo build` in a cargo repo.)
+(`--cmd` defaults to `cargo build --all-targets && cargo doc` in a cargo repo.)
 
 It grafts the cache into a throwaway worktree, builds there, and fails if the
 build wrote through to the main checkout's files, failed, or changed nothing
