@@ -118,7 +118,9 @@ curl -fsSL https://raw.githubusercontent.com/Nixotica/workforest/release/plugin/
   -o ~/.claude/skills/workforest/SKILL.md
 ```
 
-For other agents, put the skill wherever they read skills from.
+For claude.ai or other agents, each release has the skill alone as
+`workforest-skill.zip`: a `workforest` folder holding `SKILL.md`, to upload or
+unpack wherever they read skills from.
 
 ## Usage
 
