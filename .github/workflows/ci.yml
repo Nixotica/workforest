@@ -10,8 +10,13 @@ permissions:
 
 jobs:
   nix:
-    name: Build, test and install with Nix
-    runs-on: ubuntu-latest
+    name: Build, test and install with Nix (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # x86_64 and aarch64 Linux, each with the static binary releases ship.
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
 
@@ -38,19 +43,23 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-tarball
+          name: release-tarball-${{ matrix.runner }}
           path: dist/
 
   install:
-    name: Install with install.sh on a clean runner
+    name: Install with install.sh on a clean runner (${{ matrix.runner }})
     needs: nix
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v4
         with:
-          name: release-tarball
+          name: release-tarball-${{ matrix.runner }}
           path: dist
 
       - name: Install from the tarball, as a release serves it

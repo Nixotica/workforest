@@ -27,7 +27,7 @@ workforest needs `git` on your `PATH`. Releases are rolling: every commit on
 installs follow. Each new version is also a GitHub release, with prebuilt
 binaries.
 
-On Linux (x86_64), without Nix or Cargo:
+On Linux (x86_64 or aarch64), without Nix or Cargo:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Nixotica/workforest/release/install.sh | sh
