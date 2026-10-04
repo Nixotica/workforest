@@ -9,9 +9,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use toml_edit::{DocumentMut, Item};
+use toml_edit::{Array, DocumentMut, Item, value};
 
-use crate::error::{Result, bail};
+use crate::error::{Context, Result, bail};
 
 pub struct Config {
     /// Directory holding one subdirectory per forest.
@@ -100,6 +100,62 @@ impl Config {
         })
     }
 
+    /// The directories where repos named on the command line are looked for:
+    /// `$WORKFOREST_REPOS`, colon-separated like `PATH`, else `repos` in the
+    /// config file, one path or a list, which `workforest setup` writes. There
+    /// is no default: without either, repos must be given as paths.
+    pub fn repos(&self) -> Result<Setting<Vec<PathBuf>>> {
+        const VAR: &str = "WORKFOREST_REPOS";
+        if let Some(dirs) = env::var_os(VAR).filter(|dirs| !dirs.is_empty()) {
+            return Ok(Setting {
+                value: env::split_paths(&dirs)
+                    .filter(|dir| !dir.as_os_str().is_empty())
+                    .collect(),
+                source: Source::Env(VAR),
+            });
+        }
+        let Some(item) = self.file.get(&["repos"]) else {
+            return Ok(Setting {
+                value: Vec::new(),
+                source: Source::Default,
+            });
+        };
+        let dirs = match item.as_array() {
+            Some(list) => list
+                .iter()
+                .map(|dir| match dir.as_str() {
+                    Some(dir) => self.file.expand("repos", dir),
+                    None => bail!("repos in {} must be paths", self.file.path.display()),
+                })
+                .collect::<Result<_>>()?,
+            None => vec![self.file.path_value("repos", item)?],
+        };
+        Ok(Setting {
+            value: dirs,
+            source: self.file.source(),
+        })
+    }
+
+    /// Write `dirs` as `repos` in the config file, creating it if need be and
+    /// keeping everything else in it as it was. Directories under the home
+    /// directory are written as `~/...`.
+    pub fn write_repos(&self, dirs: &[PathBuf]) -> Result<()> {
+        let shown: Vec<String> = dirs.iter().map(|dir| tilde(dir)).collect();
+        let mut doc = self.file.doc.clone().unwrap_or_default();
+        doc["repos"] = match shown.as_slice() {
+            [one] => value(one.as_str()),
+            many => value(many.iter().map(String::as_str).collect::<Array>()),
+        };
+        let path = &self.file.path;
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).context(format!("could not create {}", dir.display()))?;
+        }
+        let staged = path.with_extension("toml.tmp");
+        fs::write(&staged, doc.to_string())
+            .context(format!("could not write {}", staged.display()))?;
+        fs::rename(&staged, path).context(format!("could not replace {}", path.display()))
+    }
+
     /// The config file's path, and whether it exists.
     pub fn file(&self) -> (&Path, bool) {
         (&self.file.path, self.file.doc.is_some())
@@ -108,11 +164,27 @@ impl Config {
     /// Every setting, as `workforest config` shows it.
     pub fn shown(&self) -> Vec<Shown> {
         let link_min = self.link_min();
+        let repos = self.repos();
         vec![
             Shown {
                 name: "forest_root",
                 value: Ok(self.forest_root.display().to_string()),
                 source: self.forest_root_source.clone(),
+            },
+            Shown {
+                name: "repos",
+                source: match &repos {
+                    Ok(setting) => setting.source.clone(),
+                    Err(_) => self.file.source(),
+                },
+                value: repos
+                    .map(|setting| match setting.value.as_slice() {
+                        [] => "not set: run `workforest setup`".to_owned(),
+                        dirs => env::join_paths(dirs)
+                            .map(|dirs| dirs.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    })
+                    .map_err(|err| err.to_string()),
             },
             Shown {
                 name: "cache.link_min",
@@ -133,7 +205,7 @@ impl Config {
     /// Settings in the config file that workforest doesn't know, such as a
     /// misspelt one, which is otherwise ignored.
     pub fn unknown_settings(&self) -> Vec<String> {
-        const KNOWN: [&str; 2] = ["forest_root", "cache.link_min"];
+        const KNOWN: [&str; 3] = ["forest_root", "repos", "cache.link_min"];
         let Some(doc) = &self.file.doc else {
             return Vec::new();
         };
@@ -232,11 +304,12 @@ impl ConfigFile {
         let Some(text) = item.as_str() else {
             bail!("{name} in {} must be a path", self.path.display());
         };
-        let path = match text.strip_prefix('~') {
-            Some("") => home()?,
-            Some(rest) if rest.starts_with('/') => home()?.join(rest.trim_start_matches('/')),
-            _ => PathBuf::from(text),
-        };
+        self.expand(name, text)
+    }
+
+    /// `text`, a path that is absolute or starts with `~/`, with `~` expanded.
+    fn expand(&self, name: &str, text: &str) -> Result<PathBuf> {
+        let path = expand_home(text)?;
         if !path.is_absolute() {
             bail!(
                 "{name} in {} must be absolute or start with ~/, not '{text}'",
@@ -244,6 +317,27 @@ impl ConfigFile {
             );
         }
         Ok(path)
+    }
+}
+
+/// `text` with a leading `~` or `~/` standing for the home directory.
+pub fn expand_home(text: &str) -> Result<PathBuf> {
+    Ok(match text.strip_prefix('~') {
+        Some("") => home()?,
+        Some(rest) if rest.starts_with('/') => home()?.join(rest.trim_start_matches('/')),
+        _ => PathBuf::from(text),
+    })
+}
+
+/// `path`, with the home directory shown as `~`.
+pub fn tilde(path: &Path) -> String {
+    let Ok(home) = home() else {
+        return path.display().to_string();
+    };
+    match path.strip_prefix(&home) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
     }
 }
 
@@ -255,7 +349,7 @@ fn env_value(var: &str) -> Option<String> {
 }
 
 /// `$HOME`, which must be set.
-fn home() -> Result<PathBuf> {
+pub fn home() -> Result<PathBuf> {
     match env::var_os("HOME") {
         Some(home) if !home.is_empty() => Ok(PathBuf::from(home)),
         _ => bail!("HOME is not set"),

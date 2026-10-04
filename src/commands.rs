@@ -1,6 +1,7 @@
 //! What each subcommand does.
 
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use clap::CommandFactory;
@@ -9,13 +10,14 @@ use crate::cache;
 use crate::cli::{
     Branching, BurnArgs, CacheCommand, CacheDoctorArgs, CacheDropArgs, CacheGraftArgs,
     CachePathsArgs, Caching, Cli, Command, CutArgs, FireArgs, ForestArg, LsArgs, NewArgs,
-    PlantArgs, Removal,
+    PlantArgs, Removal, SetupArgs,
 };
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::error::{Context, Result, bail};
 use crate::fire;
 use crate::forest::{Forest, Tree, cwd_is_within, dir_name};
 use crate::git;
+use crate::repos;
 
 /// How to name a forest to commands that take it with `-f`.
 const NAME_WITH_FLAG: &str = "pass -f <forest>";
@@ -40,13 +42,14 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Status(args) => status(&Config::load()?, args)?,
         Command::Path(args) => path(&Config::load()?, args)?,
         Command::Config => show_config(&Config::load()?),
+        Command::Setup(args) => setup(&Config::load()?, args)?,
         Command::Cache(args) => {
             let config = Config::load()?;
             match args.command {
                 CacheCommand::Status(args) => cache_status(&config, args)?,
                 CacheCommand::Graft(args) => cache_graft(&config, args)?,
                 CacheCommand::Drop(args) => cache_drop(&config, args)?,
-                CacheCommand::Paths(args) => cache_paths(args)?,
+                CacheCommand::Paths(args) => cache_paths(&config, args)?,
                 CacheCommand::Doctor(args) => cache_doctor(&config, args)?,
             }
         }
@@ -55,7 +58,7 @@ pub fn run(cli: Cli) -> Result<()> {
 }
 
 fn new(config: &Config, args: NewArgs) -> Result<()> {
-    let sources = main_worktrees(&args.repos)?;
+    let sources = main_worktrees(config, &args.repos)?;
     let graft = grafting(config, &args.caching)?;
     let forest = Forest::create(config, &args.forest)?;
     println!("new forest {} at {}", forest.name, forest.dir.display());
@@ -67,7 +70,7 @@ fn new(config: &Config, args: NewArgs) -> Result<()> {
 
 fn plant(config: &Config, args: PlantArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
-    let sources = main_worktrees(&args.repos)?;
+    let sources = main_worktrees(config, &args.repos)?;
     let graft = grafting(config, &args.caching)?;
     plant_sources(&forest, sources, args.branching, graft)
 }
@@ -82,8 +85,13 @@ fn grafting(config: &Config, caching: &Caching) -> Result<Option<u64>> {
 }
 
 /// The main worktree of each repo argument, all checked before anything changes.
-fn main_worktrees(repos: &[String]) -> Result<Vec<PathBuf>> {
-    repos.iter().map(|arg| git::main_worktree(arg)).collect()
+fn main_worktrees(config: &Config, repos: &[String]) -> Result<Vec<PathBuf>> {
+    repos.iter().map(|arg| main_worktree(config, arg)).collect()
+}
+
+/// The main worktree of the repo that `arg` names, by path or by name.
+fn main_worktree(config: &Config, arg: &str) -> Result<PathBuf> {
+    git::main_worktree(&repos::resolve(config, arg)?)
 }
 
 /// Add a worktree of each repo to `forest`, all on the same branch. Unless
@@ -452,6 +460,62 @@ fn fire(config: &Config, args: FireArgs) -> Result<()> {
     Ok(())
 }
 
+fn setup(config: &Config, args: SetupArgs) -> Result<()> {
+    let answers = if args.repos.is_empty() {
+        ask_for_repos()?
+    } else {
+        args.repos
+    };
+    let mut dirs = Vec::new();
+    for answer in &answers {
+        let dir = config::expand_home(answer)?;
+        match fs::canonicalize(&dir) {
+            Ok(dir) if dir.is_dir() => dirs.push(dir),
+            _ => bail!("no such directory: {}", dir.display()),
+        }
+    }
+    config.write_repos(&dirs)?;
+    for dir in &dirs {
+        println!(
+            "repos in {} ({} found)",
+            config::tilde(dir),
+            repos::count(dir)
+        );
+    }
+    println!("written to {}", config.file().0.display());
+    Ok(())
+}
+
+/// Ask on the terminal where repos live, suggesting the directories that look
+/// like it. Enter takes the first suggestion.
+fn ask_for_repos() -> Result<Vec<String>> {
+    let suggestions = repos::suggestions(&config::home()?);
+    eprintln!("Where do your repos live? Repos named on the command line are looked for there.");
+    for (dir, count) in &suggestions {
+        eprintln!("  {}  ({count} repos)", config::tilde(dir));
+    }
+    let first = suggestions.first().map(|(dir, _)| config::tilde(dir));
+    match &first {
+        Some(first) => eprint!("Directory [{first}]: "),
+        None => eprint!("Directory: "),
+    }
+    io::stderr()
+        .flush()
+        .context("could not write to the terminal")?;
+    let mut answer = String::new();
+    let read = io::stdin()
+        .read_line(&mut answer)
+        .context("could not read an answer")?;
+    if read == 0 {
+        bail!("no answer: run `workforest setup --repos <dir>` to set up without asking");
+    }
+    match (answer.trim(), first) {
+        ("", Some(first)) => Ok(vec![first]),
+        ("", None) => bail!("no directory given"),
+        (answer, _) => Ok(vec![answer.to_owned()]),
+    }
+}
+
 fn show_config(config: &Config) {
     let (path, exists) = config.file();
     let found = if exists { "" } else { " (not found)" };
@@ -531,8 +595,8 @@ fn cache_drop(config: &Config, args: CacheDropArgs) -> Result<()> {
     Ok(())
 }
 
-fn cache_paths(args: CachePathsArgs) -> Result<()> {
-    let source = git::main_worktree(&args.repo)?;
+fn cache_paths(config: &Config, args: CachePathsArgs) -> Result<()> {
+    let source = main_worktree(config, &args.repo)?;
     let declared = cache::declared(&source);
     cache::warn(&declared.warnings);
     println!("{}  {}", dir_name(&source), source.display());
@@ -554,7 +618,7 @@ fn cache_paths(args: CachePathsArgs) -> Result<()> {
 }
 
 fn cache_doctor(config: &Config, args: CacheDoctorArgs) -> Result<()> {
-    let source = git::main_worktree(&args.repo)?;
+    let source = main_worktree(config, &args.repo)?;
     cache::doctor::doctor(config, &source, args.cmd.as_deref())
 }
 

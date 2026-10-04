@@ -11,7 +11,8 @@ pub const VERSION: &str = match option_env!("WORKFOREST_VERSION") {
 
 const AFTER_HELP: &str = "\
 Repos are given as paths, absolute or relative to the current directory: `.` is
-the repo you're in. Forests live under $WORKFOREST_ROOT, else forest_root in
+the repo you're in. Once `workforest setup` has said where your repos live, a
+bare name such as api names one there. Forests live under $WORKFOREST_ROOT, else forest_root in
 ~/.config/workforest/config.toml, else ~/.workforest; see `workforest config`.
 
 Planting a tree also grafts the build caches its repo declares in
@@ -64,6 +65,9 @@ pub enum Command {
     Cache(CacheArgs),
     /// Show each setting, its value, and where it comes from
     Config,
+    /// Say where your repos live, so that they can be named rather than given
+    /// as paths
+    Setup(SetupArgs),
 }
 
 #[derive(Args)]
@@ -141,6 +145,14 @@ pub struct FireArgs {
     /// has commits not on its base
     #[arg(long)]
     pub delete_branches: bool,
+}
+
+#[derive(Args)]
+pub struct SetupArgs {
+    /// Directories holding your repos, written to the config file without
+    /// asking [default: ask, suggesting directories that hold several repos]
+    #[arg(long, value_name = "DIR", num_args = 1..)]
+    pub repos: Vec<String>,
 }
 
 #[derive(Args)]
