@@ -4,7 +4,8 @@ name: Release
 # branch moves forward to it. The Nix flake, the Claude Code plugin and cargo
 # installs all follow `release`, so users only ever get commits that passed.
 # The first commit to pass with a new Cargo.toml version is also tagged
-# `v<version>` and gets a GitHub release.
+# `v<version>` and gets a GitHub release, with a static binary for each
+# platform in a tarball and their SHA256SUMS, which install.sh installs.
 on:
   workflow_run:
     workflows: [CI]
@@ -24,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SHA: ${{ github.event.workflow_run.head_sha }}
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -41,7 +44,11 @@ jobs:
           fi
           git push origin "$SHA:refs/heads/release"
 
+      # Only a release made by this run gets binaries, built from its commit.
+      # Re-running failed jobs reuses this job's output, so a failed upload
+      # can be retried.
       - name: Tag a new version
+        id: tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -52,3 +59,55 @@ jobs:
           fi
           gh release create "v$version" --target "$SHA" \
             --title "workforest $version" --generate-notes
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: Build the ${{ matrix.target }} tarball
+    needs: release
+    if: needs.release.outputs.tag != ''
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build the static binary and its tarball
+        run: |
+          nix build --print-build-logs .#release-tarball
+          mkdir dist
+          cp -L result "dist/$(basename "$(readlink result)" | cut -d- -f2-)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ matrix.target }}
+          path: dist/
+
+  publish:
+    name: Attach the binaries to the release
+    needs: [release, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tarball-*
+          path: dist
+          merge-multiple: true
+
+      - name: Upload the tarballs and their SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          cd dist
+          sha256sum -- *.tar.gz > SHA256SUMS
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber -- *.tar.gz SHA256SUMS

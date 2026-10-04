@@ -29,6 +29,39 @@ jobs:
       - name: Smoke-test the installed binary
         run: ci/smoke.sh "$RUNNER_TEMP/profile"
 
+      # The static binary and tarball that a release ships, for the next job.
+      - name: Build the release tarball
+        run: |
+          nix build --print-build-logs .#release-tarball
+          mkdir dist
+          cp -L result "dist/$(basename "$(readlink result)" | cut -d- -f2-)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-tarball
+          path: dist/
+
+  install:
+    name: Install with install.sh on a clean runner
+    needs: nix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-tarball
+          path: dist
+
+      - name: Install from the tarball, as a release serves it
+        run: |
+          (cd dist && sha256sum -- *.tar.gz > SHA256SUMS)
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          WORKFOREST_RELEASES="file://$PWD/dist" WORKFOREST_VERSION="$version" sh install.sh
+
+      - name: Smoke-test the installed binary
+        run: ci/smoke.sh "$HOME/.local"
+
   plugin:
     name: Validate the Claude Code plugin
     runs-on: ubuntu-latest

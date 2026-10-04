@@ -44,6 +44,7 @@ machine:
 | packages managed by Home Manager or NixOS | install nothing yourself; show the flake input `workforest.url = "github:Nixotica/workforest/release";` and adding `workforest.packages.<system>.default` to their packages |
 | `nix` | `nix profile add github:Nixotica/workforest/release` (older Nix calls it `nix profile install`) |
 | `cargo` | `cargo install --locked --git https://github.com/Nixotica/workforest --branch release` |
+| Linux on x86_64, with neither | `curl -fsSL https://raw.githubusercontent.com/Nixotica/workforest/release/install.sh \| sh`, which installs into `~/.local/bin` |
 
 If none of these fit, point the user at
 <https://github.com/Nixotica/workforest#install>. After installing, run
@@ -59,7 +60,7 @@ on the terminal. Then carry on with the task.
 If a command or flag below is reported as unknown, the installed tool is older
 than this skill. Offer to update it the same way it was installed: for a Nix
 profile, `nix profile list` shows the entry to `nix profile upgrade`; for cargo,
-re-run the `cargo install` with `--force`.
+re-run the `cargo install` with `--force`; for install.sh, run it again.
 
 ## When to start a forest
 

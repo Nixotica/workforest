@@ -23,8 +23,22 @@ which trees are sparse.
 ## Install
 
 workforest needs `git` on your `PATH`. Releases are rolling: every commit on
-`main` that passes CI is released to the `release` branch, which each install
-method below follows.
+`main` that passes CI is released to the `release` branch, which Nix and Cargo
+installs follow. Each new version is also a GitHub release, with prebuilt
+binaries.
+
+On Linux (x86_64), without Nix or Cargo:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Nixotica/workforest/release/install.sh | sh
+```
+
+It downloads the latest release's static binary, checks it against the
+release's `SHA256SUMS`, and installs `workforest` and `wf` into `~/.local/bin`,
+with shell completions and the agent skill under `~/.local/share`. Run in a
+terminal, it then asks where your repos live (`workforest setup`).
+`WORKFOREST_VERSION` picks a version and `WORKFOREST_PREFIX` another place than
+`~/.local`. Run it again to update.
 
 With Nix:
 
