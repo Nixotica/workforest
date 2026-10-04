@@ -351,6 +351,14 @@ nix develop        # cargo, clippy, rustfmt, rust-analyzer and git
 nix flake check    # tests, clippy, rustfmt and the package build, as CI runs them
 ```
 
+`examples/graft_bench.rs` times a cache graft of a synthetic cargo `target`,
+a fifth the size of a large real one by default:
+
+```sh
+cargo build --release
+cargo run --release --example graft_bench -- --dir /path/on/the/filesystem/to/test
+```
+
 When CI passes on a commit pushed to `main`, the release workflow moves the
 `release` branch forward to it. Bump `version` in `Cargo.toml` when the
 command-line interface changes: the first commit to pass CI with a new version

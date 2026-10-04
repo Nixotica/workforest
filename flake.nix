@@ -36,6 +36,7 @@
               ./Cargo.lock
               ./src
               ./tests
+              ./examples
             ];
           };
           commonArgs = {
