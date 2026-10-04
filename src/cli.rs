@@ -1,6 +1,9 @@
 //! The command-line interface.
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap_complete::engine::ArgValueCompleter;
+
+use crate::complete;
 
 /// The version `--version` reports. A Nix build passes the version with its
 /// commit in `WORKFOREST_VERSION`; any other build reports the crate version.
@@ -68,13 +71,23 @@ pub enum Command {
     /// Say where your repos live, so that they can be named rather than given
     /// as paths
     Setup(SetupArgs),
+    /// Print a shell's completion script, for workforest and wf
+    Completions(CompletionsArgs),
+    /// Print shell functions to load at startup: wfcd, which cds into a forest
+    /// or one of its trees
+    ShellInit(ShellArg),
+    /// Print the names of every forest, or of the trees in one, for shell
+    /// functions to complete
+    #[command(name = "__names", hide = true)]
+    Names(NamesArgs),
 }
 
 #[derive(Args)]
 pub struct NewArgs {
     /// Name of the forest, which is also the default branch name
     pub forest: String,
-    /// Paths of repos to plant right away
+    /// Repos to plant right away, by path or by name
+    #[arg(add = ArgValueCompleter::new(complete::repos))]
     pub repos: Vec<String>,
     #[command(flatten)]
     pub branching: Branching,
@@ -84,8 +97,8 @@ pub struct NewArgs {
 
 #[derive(Args)]
 pub struct PlantArgs {
-    /// Paths of repos to plant
-    #[arg(required = true)]
+    /// Repos to plant, by path or by name
+    #[arg(required = true, add = ArgValueCompleter::new(complete::repos))]
     pub repos: Vec<String>,
     #[command(flatten)]
     pub target: Target,
@@ -98,7 +111,7 @@ pub struct PlantArgs {
 #[derive(Args)]
 pub struct CutArgs {
     /// Trees to cut, by name
-    #[arg(required = true)]
+    #[arg(required = true, add = ArgValueCompleter::new(complete::trees))]
     pub trees: Vec<String>,
     #[command(flatten)]
     pub target: Target,
@@ -109,6 +122,7 @@ pub struct CutArgs {
 #[derive(Args)]
 pub struct BurnArgs {
     /// Forest to burn [default: the forest containing the current directory]
+    #[arg(add = ArgValueCompleter::new(complete::forests))]
     pub forest: Option<String>,
     #[command(flatten)]
     pub removal: Removal,
@@ -150,6 +164,32 @@ pub struct FireArgs {
 }
 
 #[derive(Args)]
+pub struct CompletionsArgs {
+    pub shell: Shell,
+    /// The command to complete [default: workforest and wf]
+    #[arg(long, value_parser = ["workforest", "wf"])]
+    pub bin: Option<String>,
+}
+
+#[derive(Args)]
+pub struct ShellArg {
+    pub shell: Shell,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum Shell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
+#[derive(Args)]
+pub struct NamesArgs {
+    /// Forest whose trees to name [default: name every forest]
+    pub forest: Option<String>,
+}
+
+#[derive(Args)]
 pub struct SetupArgs {
     /// Directories holding your repos, written to the config file without
     /// asking [default: ask, suggesting directories that hold several repos]
@@ -160,6 +200,7 @@ pub struct SetupArgs {
 #[derive(Args)]
 pub struct LsArgs {
     /// Forest whose trees to list [default: list every forest]
+    #[arg(add = ArgValueCompleter::new(complete::forests))]
     pub forest: Option<String>,
     #[command(flatten)]
     pub output: Output,
@@ -169,6 +210,7 @@ pub struct LsArgs {
 #[derive(Args)]
 pub struct ReportArgs {
     /// Forest to act on [default: the forest containing the current directory]
+    #[arg(add = ArgValueCompleter::new(complete::forests))]
     pub forest: Option<String>,
     #[command(flatten)]
     pub output: Output,
@@ -185,6 +227,7 @@ pub struct Output {
 #[derive(Args)]
 pub struct ForestArg {
     /// Forest to act on [default: the forest containing the current directory]
+    #[arg(add = ArgValueCompleter::new(complete::forests))]
     pub forest: Option<String>,
 }
 
@@ -192,7 +235,7 @@ pub struct ForestArg {
 #[derive(Args)]
 pub struct Target {
     /// Forest to act on [default: the forest containing the current directory]
-    #[arg(short, long)]
+    #[arg(short, long, add = ArgValueCompleter::new(complete::forests))]
     pub forest: Option<String>,
 }
 
@@ -275,6 +318,7 @@ pub enum CacheCommand {
 #[derive(Args)]
 pub struct CacheGraftArgs {
     /// Trees to graft into, by name [default: every tree in the forest]
+    #[arg(add = ArgValueCompleter::new(complete::trees))]
     pub trees: Vec<String>,
     #[command(flatten)]
     pub target: Target,
@@ -286,6 +330,7 @@ pub struct CacheGraftArgs {
 #[derive(Args)]
 pub struct CacheDropArgs {
     /// Trees whose caches to drop, by name [default: every tree in the forest]
+    #[arg(add = ArgValueCompleter::new(complete::trees))]
     pub trees: Vec<String>,
     #[command(flatten)]
     pub target: Target,
@@ -293,13 +338,15 @@ pub struct CacheDropArgs {
 
 #[derive(Args)]
 pub struct CachePathsArgs {
-    /// Path of the repo
+    /// The repo, by path or by name
+    #[arg(add = ArgValueCompleter::new(complete::repos))]
     pub repo: String,
 }
 
 #[derive(Args)]
 pub struct CacheDoctorArgs {
-    /// Path of the repo
+    /// The repo, by path or by name
+    #[arg(add = ArgValueCompleter::new(complete::repos))]
     pub repo: String,
     /// Shell command that builds the repo, run in the throwaway worktree
     /// [default: `cargo build --all-targets && cargo doc` in a repo with a

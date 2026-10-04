@@ -68,6 +68,31 @@ fn subdirs(dir: &Path) -> impl Iterator<Item = PathBuf> {
         .filter(|path| path.is_dir())
 }
 
+/// The names of the repos in `dirs` that a name would find, sorted.
+pub fn names(dirs: &[PathBuf]) -> Vec<String> {
+    let mut names: Vec<String> = dirs
+        .iter()
+        .flat_map(|dir| {
+            let direct = subdirs(dir).filter(|sub| git::is_checkout(sub));
+            let grouped: Vec<PathBuf> = groups(dir)
+                .flat_map(|group| {
+                    subdirs(&group)
+                        .filter(|sub| git::is_checkout(sub))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            direct.chain(grouped)
+        })
+        .filter_map(|repo| {
+            repo.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// How many repos `dir` holds where a name would find them.
 pub fn count(dir: &Path) -> usize {
     let direct = subdirs(dir).filter(|sub| git::is_checkout(sub)).count();

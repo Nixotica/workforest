@@ -53,8 +53,15 @@
               # The commit is part of `workforest --version`, so it only goes on
               # this derivation; the dependency build stays cached across commits.
               WORKFOREST_VERSION = "${cargoToml.package.version} (${rev})";
+              nativeBuildInputs = [ pkgs.installShellFiles ];
               postInstall = ''
                 ln -s workforest "$out/bin/wf"
+                for bin in workforest wf; do
+                  installShellCompletion --cmd "$bin" \
+                    --bash <("$out/bin/workforest" completions bash --bin "$bin") \
+                    --zsh <("$out/bin/workforest" completions zsh --bin "$bin") \
+                    --fish <("$out/bin/workforest" completions fish --bin "$bin")
+                done
                 install -Dm644 ${./plugin/skills/workforest/SKILL.md} \
                   "$out/share/workforest/skills/workforest/SKILL.md"
               '';
@@ -72,7 +79,13 @@
               commonArgs
               // {
                 inherit cargoArtifacts;
-                nativeBuildInputs = [ pkgs.git ];
+                # The shell tests run each shell that is installed.
+                nativeBuildInputs = [
+                  pkgs.git
+                  pkgs.bashInteractive
+                  pkgs.zsh
+                  pkgs.fish
+                ];
               }
             );
             clippy = craneLib.cargoClippy (
@@ -89,6 +102,9 @@
             packages = [
               pkgs.git
               pkgs.rust-analyzer
+              pkgs.bashInteractive
+              pkgs.zsh
+              pkgs.fish
             ];
           };
         };

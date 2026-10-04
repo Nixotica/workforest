@@ -13,6 +13,7 @@ use crate::cli::{
     CachePathsArgs, Caching, Cli, Command, CutArgs, FireArgs, ForestArg, LsArgs, NewArgs,
     PlantArgs, Removal, ReportArgs, SetupArgs,
 };
+use crate::complete;
 use crate::config::{self, Config};
 use crate::error::{Context, Result, bail};
 use crate::fire;
@@ -44,6 +45,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Path(args) => path(&Config::load()?, args)?,
         Command::Config => show_config(&Config::load()?),
         Command::Setup(args) => setup(&Config::load()?, args)?,
+        Command::Completions(args) => complete::print_registration(&args)?,
+        Command::ShellInit(args) => complete::print_shell_init(args.shell)?,
+        Command::Names(args) => complete::print_names(&args)?,
         Command::Cache(args) => {
             let config = Config::load()?;
             match args.command {

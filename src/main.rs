@@ -4,6 +4,7 @@
 mod cache;
 mod cli;
 mod commands;
+mod complete;
 mod config;
 mod error;
 mod fire;
@@ -13,9 +14,11 @@ mod repos;
 
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 fn main() -> ExitCode {
+    // Answers a shell asking for completions, then exits; otherwise returns.
+    clap_complete::CompleteEnv::with_factory(cli::Cli::command).complete();
     match commands::run(cli::Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
