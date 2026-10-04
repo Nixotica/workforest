@@ -16,7 +16,8 @@
 //!
 //! On Linux, `fs::copy` uses `copy_file_range`, which tries a reflink first, so
 //! on btrfs or XFS a copy shares its data until written and costs little disk
-//! either. It is counted as copied all the same.
+//! either; on macOS it clones the file on APFS. It is counted as copied all the
+//! same.
 
 use std::fs::{self, File, FileTimes, Metadata};
 use std::io;
