@@ -9,6 +9,7 @@ use std::process::{Command, Output, Stdio};
 use tempfile::TempDir;
 
 mod cache;
+mod fire;
 
 /// A throwaway home holding a forest root, a repos root, and the remotes those
 /// repos were cloned from.
@@ -548,8 +549,8 @@ fn burn_counts_merged_work_as_landed_however_it_was_merged() {
 }
 
 #[test]
-fn status_shows_squashed_and_rebased_work_as_landed() {
-    for merge in [Merge::Squash, Merge::Rebase] {
+fn status_shows_merged_work_as_landed_however_it_was_merged() {
+    for merge in [Merge::Regular, Merge::Squash, Merge::Rebase] {
         let sb = Sandbox::new();
         sb.repo("api");
         let tree = sb.pull_request("pr", "api");
@@ -562,9 +563,18 @@ fn status_shows_squashed_and_rebased_work_as_landed() {
         sb.merge_on_remote("api", "pr", merge);
         sb.git(&tree, &["fetch", "--quiet", "--prune"]);
 
-        // The pruned upstream doesn't matter once the work has landed.
+        // The pruned upstream doesn't matter once the work has landed. A
+        // regular merge leaves the branch on the base, with nothing ahead.
         let after = sb.ok(&sb.root, &["status", "pr"]);
-        assert!(after.contains("landed +2/-"), "{merge:?}: {after}");
+        let ahead = if matches!(merge, Merge::Regular) {
+            0
+        } else {
+            2
+        };
+        assert!(
+            after.contains(&format!("landed +{ahead}/-")),
+            "{merge:?}: {after}"
+        );
         assert!(!after.contains("pushed"), "{merge:?}: {after}");
     }
 }

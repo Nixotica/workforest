@@ -8,10 +8,12 @@ use clap::CommandFactory;
 use crate::cache;
 use crate::cli::{
     Branching, BurnArgs, CacheCommand, CacheDoctorArgs, CacheDropArgs, CacheGraftArgs,
-    CachePathsArgs, Caching, Cli, Command, CutArgs, ForestArg, LsArgs, NewArgs, PlantArgs, Removal,
+    CachePathsArgs, Caching, Cli, Command, CutArgs, FireArgs, ForestArg, LsArgs, NewArgs,
+    PlantArgs, Removal,
 };
 use crate::config::{self, Config};
 use crate::error::{Context, Result, bail};
+use crate::fire;
 use crate::forest::{Forest, Tree, cwd_is_within, dir_name};
 use crate::git;
 
@@ -33,6 +35,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Plant(args) => plant(&Config::from_env()?, args)?,
         Command::Cut(args) => cut(&Config::from_env()?, args)?,
         Command::Burn(args) => burn(&Config::from_env()?, args)?,
+        Command::Fire(args) => fire(&Config::from_env()?, args)?,
         Command::Ls(args) => ls(&Config::from_env()?, args)?,
         Command::Status(args) => status(&Config::from_env()?, args)?,
         Command::Path(args) => path(&Config::from_env()?, args)?,
@@ -132,13 +135,19 @@ fn cut(config: &Config, args: CutArgs) -> Result<()> {
         {
             bail!("{repo} has {risk}; commit/push it or re-run with --force");
         }
-        let dir = forest.tree_dir(&tree.repo);
-        let standing_in_it = cwd_is_within(&dir);
-        remove_tree(&forest, &tree, &args.removal)?;
-        println!("cut {repo} from {}", forest.name);
-        if standing_in_it {
-            point_out_of(&dir, &tree.source);
-        }
+        cut_tree(&forest, &tree, &args.removal)?;
+    }
+    Ok(())
+}
+
+/// Remove one tree from `forest`, saying where to go if the shell was in it.
+fn cut_tree(forest: &Forest, tree: &Tree, removal: &Removal) -> Result<()> {
+    let dir = forest.tree_dir(&tree.repo);
+    let standing_in_it = cwd_is_within(&dir);
+    remove_tree(forest, tree, removal)?;
+    println!("cut {} from {}", tree.repo, forest.name);
+    if standing_in_it {
+        point_out_of(&dir, &tree.source);
     }
     Ok(())
 }
@@ -168,14 +177,22 @@ fn burn(config: &Config, args: BurnArgs) -> Result<()> {
             );
         }
     }
+    let removals: Vec<_> = trees.into_iter().map(|tree| (tree, args.removal)).collect();
+    burn_forest(config, &forest, &removals)
+}
+
+/// Remove each tree of `forest` as its removal says, then the forest itself,
+/// saying where to go if the shell was in it.
+fn burn_forest(config: &Config, forest: &Forest, trees: &[(Tree, Removal)]) -> Result<()> {
     let way_out = forest.contains_cwd().then(|| {
         trees
             .iter()
+            .map(|(tree, _)| tree)
             .find(|tree| cwd_is_within(&forest.tree_dir(&tree.repo)))
             .map_or_else(|| config.forest_root.clone(), |tree| tree.source.clone())
     });
-    for tree in &trees {
-        remove_tree(&forest, tree, &args.removal)?;
+    for (tree, removal) in trees {
+        remove_tree(forest, tree, removal)?;
     }
     fs::remove_dir_all(&forest.dir)
         .context(format!("could not remove {}", forest.dir.display()))?;
@@ -195,13 +212,16 @@ fn point_out_of(gone: &Path, way_out: &Path) {
     );
 }
 
-/// Remove one tree's worktree, and its branch if asked, then forget it.
+/// Remove one tree's worktree, and its branch if asked, then forget it. A tree
+/// whose directory and repo are both gone only needs forgetting.
 fn remove_tree(forest: &Forest, tree: &Tree, removal: &Removal) -> Result<()> {
     let dir = forest.tree_dir(&tree.repo);
     if dir.is_dir() {
         git::remove_worktree(&tree.source, &dir, removal.force)?;
-    } else {
+    } else if tree.source.is_dir() {
         git::prune_worktrees(&tree.source)?;
+    } else {
+        return forest.forget(&tree.repo);
     }
     if removal.delete_branches
         && !tree.branch.is_empty()
@@ -244,8 +264,8 @@ enum TreeState {
     Unknown,
     /// Uncommitted changes.
     Dirty,
-    /// No uncommitted changes, and commits ahead of the base whose changes are
-    /// on it anyway: they were squashed or rebased onto it.
+    /// No uncommitted changes, and work of its own that is on the base by now,
+    /// however it was merged.
     Landed,
     /// No uncommitted changes.
     Clean,
@@ -275,9 +295,7 @@ fn status(config: &Config, args: ForestArg) -> Result<()> {
         let behind = git::count(&dir, &format!("HEAD..{}", tree.base));
         let state = match git::is_dirty(&dir) {
             Some(true) => TreeState::Dirty,
-            Some(false) if ahead.is_some_and(|n| n > 0) && git::landed(&dir, &tree.base) => {
-                TreeState::Landed
-            }
+            Some(false) if head_landed(&dir, &tree) => TreeState::Landed,
             Some(false) => TreeState::Clean,
             None => TreeState::Unknown,
         };
@@ -301,6 +319,17 @@ fn status(config: &Config, args: ForestArg) -> Result<()> {
     Ok(())
 }
 
+/// Whether `tree`, checked out at `dir`, holds work of its own that is on the
+/// base it lands on by now.
+fn head_landed(dir: &Path, tree: &Tree) -> bool {
+    let branch = git::current_branch(dir);
+    let base = branch.as_deref().map_or_else(
+        || tree.base.clone(),
+        |branch| git::landing_base(&tree.source, &tree.base, branch),
+    );
+    git::work_landed(dir, &base, "HEAD", branch.as_deref())
+}
+
 /// Whether the tree at `dir`, `ahead` commits ahead of its base, has them all
 /// on its upstream, else how many its upstream lacks. As `burn` sees it, none
 /// are pushed when the branch has no upstream.
@@ -314,6 +343,116 @@ fn push_state(dir: &Path, ahead: u64) -> String {
         Some(0) => "pushed".to_owned(),
         unpushed => format!("{} unpushed", count_or_unknown(unpushed)),
     }
+}
+
+fn fire(config: &Config, args: FireArgs) -> Result<()> {
+    let forests = Forest::all(config)?;
+    if !args.no_fetch {
+        fire::fetch_bases(&forests);
+    }
+    let (mut burns, mut cuts, mut kept_with_dead, mut in_flight, mut failures) = (0, 0, 0, 0, 0);
+    for forest in forests {
+        let name = forest.name.clone();
+        let judgement = match fire::judge_forest(forest) {
+            Ok(judgement) => judgement,
+            Err(err) => {
+                eprintln!("workforest: {name}: {err}");
+                failures += 1;
+                continue;
+            }
+        };
+        if judgement.is_in_flight() {
+            in_flight += 1;
+            continue;
+        }
+        let dead = judgement.is_dead();
+        let has_dead = judgement.dead_trees().next().is_some();
+        let cutting = !dead && has_dead && args.scorch;
+        if !dead && has_dead && !args.scorch {
+            kept_with_dead += 1;
+        }
+        println!(
+            "{name}  {}",
+            if dead {
+                "burn"
+            } else if cutting {
+                "cut its dead trees"
+            } else {
+                "keep"
+            }
+        );
+        let mut removals = Vec::new();
+        for (tree, verdict) in &judgement.trees {
+            let mut reason = verdict.reason().to_owned();
+            if verdict.is_dead() && (dead || cutting) {
+                let delete_branch = args.delete_branches && fire::branch_spent(tree);
+                if args.delete_branches && !delete_branch {
+                    reason.push_str(&format!(
+                        "; keeps branch {}, which has commits not on {}",
+                        tree.branch, tree.base
+                    ));
+                }
+                let removal = Removal {
+                    force: false,
+                    delete_branches: delete_branch,
+                };
+                removals.push((tree.clone(), removal));
+            }
+            println!("  {:<24} {:<6} {reason}", tree.repo, verdict.label());
+        }
+        for stray in &judgement.strays {
+            println!(
+                "  {stray:<24} {:<6} a checkout the manifest doesn't record",
+                "?"
+            );
+        }
+        if dead && judgement.trees.is_empty() {
+            println!("  no trees");
+        }
+        if dead {
+            burns += 1;
+        } else if cutting {
+            cuts += removals.len();
+        }
+        if !args.yes {
+            continue;
+        }
+        let done = if dead {
+            burn_forest(config, &judgement.forest, &removals)
+        } else {
+            removals
+                .iter()
+                .try_for_each(|(tree, removal)| cut_tree(&judgement.forest, tree, removal))
+        };
+        if let Err(err) = done {
+            eprintln!("workforest: {name}: {err}");
+            failures += 1;
+        }
+    }
+    if in_flight > 0 {
+        println!("{in_flight} other forest(s) in flight");
+    }
+    if kept_with_dead > 0 {
+        println!(
+            "{kept_with_dead} forest(s) kept for their live trees hold dead ones; --scorch cuts those"
+        );
+    }
+    if burns == 0 && cuts == 0 {
+        println!("nothing to burn");
+    } else if !args.yes {
+        let mut plan = Vec::new();
+        if burns > 0 {
+            plan.push(format!("burn {burns} forest(s)"));
+        }
+        if cuts > 0 {
+            plan.push(format!("cut {cuts} tree(s)"));
+        }
+        println!("dry run: pass --yes to {}", plan.join(" and "));
+    }
+    if failures > 0 {
+        bail!("could not finish with {failures} forest(s)");
+    }
+    Ok(())
 }
 
 fn path(config: &Config, args: ForestArg) -> Result<()> {

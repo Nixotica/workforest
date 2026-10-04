@@ -115,6 +115,12 @@ pub fn default_base(repo: &Path) -> String {
     output(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|| "HEAD".to_owned())
 }
 
+/// Whether `rev` names a commit in the repo at `dir`.
+pub fn resolves(dir: &Path, rev: &str) -> bool {
+    let commit = format!("{rev}^{{commit}}");
+    succeeds(dir, ["rev-parse", "--verify", "--quiet", &commit])
+}
+
 pub fn branch_exists(repo: &Path, branch: &str) -> bool {
     let reference = format!("refs/heads/{branch}");
     succeeds(repo, ["show-ref", "--verify", "--quiet", &reference])
@@ -261,22 +267,108 @@ pub fn unlanded_work(dir: &Path, base: &str) -> Option<String> {
             None => format!("commits that could not be compared with {base}"),
         }
     };
-    (!landed(dir, base)).then_some(risk)
+    (!landed(dir, base, "HEAD")).then_some(risk)
 }
 
-/// Whether everything the branch at `dir` changed since it left `base` is
-/// already on `base`, as it is after a regular, squash or rebase merge: the
-/// branch's whole diff applies to `base` in reverse. The check runs against a
+/// Whether `tip`, such as `HEAD`, holds work of its own that is all on `base`
+/// by now. With commits ahead of `base`, that is whether they have [`landed`].
+/// With none ahead, the branch `tip` is on was either merged as it was, or
+/// has no work of its own, as when it was planted a moment ago or reset to its
+/// base: its reflog tells them apart by whether a commit made on it is on
+/// `base`. Without a branch, there is no reflog to tell, so nothing has landed.
+pub fn work_landed(dir: &Path, base: &str, tip: &str, branch: Option<&str>) -> bool {
+    match count(dir, &format!("{base}..{tip}")) {
+        Some(0) => branch.is_some_and(|branch| merged_commits(dir, branch, base)),
+        Some(_) => landed(dir, base, tip),
+        None => false,
+    }
+}
+
+/// Whether `branch`'s reflog records a commit made on it that is on `base`, as
+/// opposed to only its creation, moves such as resets, pulls and
+/// fast-forwards, and commits since discarded. A reflog that can't be read
+/// records nothing.
+fn merged_commits(dir: &Path, branch: &str, base: &str) -> bool {
+    const MADE: [&str; 4] = ["commit", "cherry-pick", "revert", "am"];
+    let reflog = format!("refs/heads/{branch}");
+    let Some(entries) = output(dir, ["log", "--walk-reflogs", "--format=%H %gs", &reflog]) else {
+        return false;
+    };
+    entries.lines().any(|entry| {
+        // Each subject starts with what moved the branch: `commit: <message>`,
+        // `commit (amend): <message>`, `reset: moving to <ref>`, and so on.
+        let (commit, subject) = entry.split_once(' ').unwrap_or((entry, ""));
+        let action = subject.split([':', ' ']).next().unwrap_or_default();
+        MADE.contains(&action) && succeeds(dir, ["merge-base", "--is-ancestor", commit, base])
+    })
+}
+
+/// The branch checked out in the worktree at `dir`, unless its HEAD is detached.
+pub fn current_branch(dir: &Path) -> Option<String> {
+    output(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+}
+
+/// The directory where a repo keeps its record of the linked worktree at `dir`:
+/// where it points back at the worktree, and whether it is locked.
+pub fn worktree_record(dir: &Path) -> Option<PathBuf> {
+    output(dir, ["rev-parse", "--absolute-git-dir"]).map(PathBuf::from)
+}
+
+/// The ref a tree's work lands on: its base, unless that is the tree's own
+/// branch on a remote, as when a tree is planted to carry on with a pushed
+/// branch. Reaching that only means the work was pushed, so the repo's
+/// default base stands in for it.
+pub fn landing_base(repo: &Path, base: &str, branch: &str) -> String {
+    let own = remote_of(repo, base).is_some_and(|remote| {
+        let tracking = base.strip_prefix("refs/remotes/").unwrap_or(base);
+        tracking.strip_prefix(&format!("{remote}/")) == Some(branch)
+    });
+    if own {
+        default_base(repo)
+    } else {
+        base.to_owned()
+    }
+}
+
+/// The remote whose tracking branch `base` names, if it names one. A base that
+/// no longer resolves, as after its remote branch was deleted, is read by name.
+pub fn remote_of(repo: &Path, base: &str) -> Option<String> {
+    let full = output(repo, ["rev-parse", "--symbolic-full-name", base])
+        .filter(|full| !full.is_empty())
+        .unwrap_or_else(|| base.to_owned());
+    let tracking = full.strip_prefix("refs/remotes/").unwrap_or(&full);
+    // Remote names may contain slashes, so take the longest that fits.
+    output(repo, ["remote"])?
+        .lines()
+        .filter(|remote| tracking.starts_with(&format!("{remote}/")))
+        .max_by_key(|remote| remote.len())
+        .map(str::to_owned)
+}
+
+/// Fetch `remote` into `repo`, letting git's errors through to stderr, and
+/// report whether that worked. Git never stops to ask for credentials.
+pub fn fetch(repo: &Path, remote: &str) -> bool {
+    git(repo)
+        .args(["fetch", "--quiet", remote])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdout(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Whether everything `tip`, such as `HEAD` or a branch, changed since it left
+/// `base` is already on `base`, as it is after a regular, squash or rebase
+/// merge: its whole diff applies to `base` in reverse. The check runs against a
 /// throwaway index, so it checks nothing out and writes nothing to the repo.
 ///
 /// Anything git cannot answer counts as not landed, and so does a base that has
 /// since changed lines next to the branch's changes, since a reverse apply needs
 /// each hunk's context to match exactly.
-pub fn landed(dir: &Path, base: &str) -> bool {
-    let Some(fork) = output(dir, ["merge-base", base, "HEAD"]) else {
+pub fn landed(dir: &Path, base: &str, tip: &str) -> bool {
+    let Some(fork) = output(dir, ["merge-base", base, tip]) else {
         return false;
     };
-    let Some(patch) = stdout(dir, ["diff-tree", "-r", "-p", "--binary", &fork, "HEAD"]) else {
+    let Some(patch) = stdout(dir, ["diff-tree", "-r", "-p", "--binary", &fork, tip]) else {
         return false;
     };
     if patch.is_empty() {
