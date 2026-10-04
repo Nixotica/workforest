@@ -1,6 +1,6 @@
 [package]
 name = "workforest"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 description = "Isolated git worktrees for every piece of work: one tree per repo, on a shared branch"
 license = "MIT"
@@ -8,6 +8,15 @@ repository = "https://github.com/Nixotica/workforest"
 readme = "README.md"
 keywords = ["git", "worktree", "cli"]
 categories = ["command-line-utilities", "development-tools"]
+include = ["/src", "/README.md", "/LICENSE"]
+
+# `cargo binstall workforest` downloads a GitHub release's binary instead of
+# compiling. Linux tarballs are built for musl, which binstall also looks for
+# on a glibc system.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/workforest-{ version }-{ target }.tar.gz"
+bin-dir = "workforest-{ version }-{ target }/bin/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

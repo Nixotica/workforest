@@ -104,21 +104,52 @@ jobs:
           path: dist/
 
   publish:
-    name: Attach the binaries to the release
+    name: Attach the binaries and the skill to the release
     needs: [release, binaries]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
       - uses: actions/download-artifact@v4
         with:
           pattern: tarball-*
           path: dist
           merge-multiple: true
 
-      - name: Upload the tarballs and their SHA256SUMS
+      # The skill alone, for uploading to claude.ai or another agent: a
+      # folder holding SKILL.md.
+      - name: Zip the agent skill
+        run: (cd plugin/skills && zip -r -X ../../dist/workforest-skill.zip workforest)
+
+      - name: Upload them with their SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           cd dist
-          sha256sum -- *.tar.gz > SHA256SUMS
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber -- *.tar.gz SHA256SUMS
+          sha256sum -- *.tar.gz workforest-skill.zip > SHA256SUMS
+          gh release upload "$TAG" --clobber -- *.tar.gz workforest-skill.zip SHA256SUMS
+
+  crates-io:
+    name: Publish to crates.io
+    needs: release
+    if: needs.release.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # Publishing needs a crates.io API token in the CARGO_REGISTRY_TOKEN
+      # secret; until it is set, releases skip crates.io.
+      - name: Publish the crate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "no CARGO_REGISTRY_TOKEN secret: not publishing to crates.io"
+            exit 0
+          fi
+          cargo publish --locked
