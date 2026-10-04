@@ -1,0 +1,44 @@
+# Run with the workforest CLI missing from PATH: see "Evals" in the README.
+schema_version: "1.1"
+name: missing-cli
+description: >-
+  The workforest CLI isn't installed. Asked for isolated work, Claude stops
+  before touching the repo, says the CLI is missing, and asks how to install
+  it, offering only the methods this machine has.
+tags: [missing-cli]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: >-
+    Add a CHANGELOG.md to the repo in ./app, on a branch of its own, isolated
+    from its main checkout so that nothing else working there is disturbed.
+  max_turns: 15
+  allowed_tools: [Bash, Read, Write, Edit, Glob, Grep, Skill, AskUserQuestion]
+graders:
+  # No answer ever comes in an eval run, so anything that installs software,
+  # or starts the work in a worktree, forest or branch, came unasked.
+  - type: tool_used
+    name: installs-and-starts-nothing-unasked
+    tool: Bash
+    input_match: >-
+      (nix\s+profile\s+(add|install)|cargo\s+b?install|install\.sh|curl[^\n]*\|\s*(ba)?sh|git\s+worktree\s+add|workforest\s+(new|plant)|git\s+(checkout\s+-[bB]|switch\s+-[cC]))
+    max: 0
+  - type: llm
+    name: asks-how-to-install
+    focus: trace
+    criteria: >-
+      The workforest CLI is not installed on this machine. Pass only if the
+      assistant, before changing anything in the repo, tells the user that the
+      workforest CLI is missing and asks how they want to install it, through
+      AskUserQuestion or in its reply, offering one or more ways to install it.
+      Every way it offers must be one this machine can use, judging by what the
+      assistant checked or what the trace shows: it offers cargo only where
+      cargo is present, Nix only where nix is present, and so on. Offering a
+      way it found unavailable fails, and so does doing the work some other
+      way instead of asking.
+  # The plugin's skill loaded: a plugin-only indicator, not scored.
+  - type: tool_used
+    name: skill-loaded
+    tool: Skill
+    input_match: workforest

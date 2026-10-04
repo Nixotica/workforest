@@ -1,0 +1,64 @@
+name: Eval
+
+# The plugin's eval suite (plugin/evals, see "Evals" in the README). Every run
+# is a real model call, billed to the ANTHROPIC_API_KEY secret, so it runs by
+# hand before a release rather than on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: The model the runs use
+        default: claude-sonnet-5-5
+      max-cost-usd:
+        description: The cost ceiling for each of the two cases, in USD
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    name: Run the plugin's eval suite
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      MODEL: ${{ inputs.model }}
+      MAX_COST_USD: ${{ inputs.max-cost-usd }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # Claude Code runs an eval's Bash in a bubblewrap sandbox, which needs
+      # socat, and unprivileged user namespaces, which Ubuntu's AppArmor
+      # restricts by default.
+      - name: Install Claude Code and its Bash sandbox
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap socat
+          sudo sysctl --write kernel.apparmor_restrict_unprivileged_userns=0
+          npm install --global @anthropic-ai/claude-code@2.1.289
+
+      - name: Install workforest, kept off PATH until the second case
+        run: WORKFOREST_PREFIX="$RUNNER_TEMP/workforest" sh install.sh
+
+      - name: With the CLI missing
+        run: |
+          claude plugin eval plugin --tag missing-cli --scaffold --trust-plugin \
+            --allow-tools Bash Write Edit --model "$MODEL" --max-cost-usd "$MAX_COST_USD" \
+            --no-publish --output-dir "$RUNNER_TEMP/results/missing-cli"
+
+      - name: With the CLI installed
+        if: success() || failure()
+        run: |
+          PATH="$RUNNER_TEMP/workforest/bin:$PATH" claude plugin eval plugin --tag cli-present \
+            --scaffold --trust-plugin --allow-tools Bash Write Edit --model "$MODEL" \
+            --max-cost-usd "$MAX_COST_USD" --no-publish --output-dir "$RUNNER_TEMP/results/cli-present"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: ${{ runner.temp }}/results/
