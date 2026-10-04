@@ -853,3 +853,78 @@ fn version_and_bare_invocation() {
     );
     assert!(sb.ok(&sb.root, &[]).contains("Usage:"));
 }
+
+#[test]
+fn a_squash_is_recognised_after_the_base_moves_on_unless_it_was_reverted() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    let lines: String = (1..=20).map(|n| format!("{n}\n")).collect();
+    fs::write(api.join("lines"), lines).unwrap();
+    sb.git(&api, &["add", "lines"]);
+    sb.git(&api, &["commit", "--quiet", "--message", "lines"]);
+    sb.git(&api, &["push", "--quiet", "origin", "main"]);
+    let edit = |dir: &Path, from: &str, to: &str| {
+        let text = fs::read_to_string(dir.join("lines")).unwrap();
+        let text = text.replace(&format!("\n{from}\n"), &format!("\n{to}\n"));
+        fs::write(dir.join("lines"), text).unwrap();
+        sb.git(dir, &["commit", "--quiet", "--all", "--message", to]);
+    };
+    sb.ok(&sb.root, &["new", "pr", "repos/api"]);
+    let tree = sb.forest("pr").join("api");
+    edit(&tree, "4", "four");
+    edit(&tree, "14", "fourteen");
+    sb.git(&tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
+    sb.merge_on_remote("api", "pr", Merge::Squash);
+    let forge = sb.forge("api");
+    let squash = sb.git(&forge, &["rev-parse", "HEAD"]);
+    // Lines in the context of both changes move on, so the reverse apply
+    // can't see the squash, though they are far enough for a clean revert.
+    edit(&forge, "7", "seven");
+    edit(&forge, "17", "seventeen");
+    sb.git(&forge, &["push", "--quiet", "origin", "main"]);
+    sb.git(&tree, &["fetch", "--quiet", "--prune"]);
+    let status = || sb.ok(&sb.root, &["status", "pr"]);
+    assert!(status().contains("landed +2/-"), "{}", status());
+
+    sb.git(&forge, &["revert", "--no-edit", &squash]);
+    sb.git(&forge, &["push", "--quiet", "origin", "main"]);
+    sb.git(&tree, &["fetch", "--quiet"]);
+    assert!(status().contains("clean  +2/-"), "{}", status());
+    let refusal = sb.fails(&sb.root, &["burn", "pr"]);
+    assert!(refusal.contains("refusing to burn pr"), "{refusal}");
+
+    sb.git(&forge, &["revert", "--no-edit", "HEAD"]);
+    sb.git(&forge, &["push", "--quiet", "origin", "main"]);
+    sb.git(&tree, &["fetch", "--quiet"]);
+    assert!(status().contains("landed +2/-"), "{}", status());
+    sb.ok(&sb.root, &["burn", "pr"]);
+}
+
+#[test]
+fn another_change_to_the_same_binary_file_is_not_a_squash_of_it() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    fs::write(api.join("blob"), [0u8, 1, 2, 3]).unwrap();
+    sb.git(&api, &["add", "blob"]);
+    sb.git(&api, &["commit", "--quiet", "--message", "blob"]);
+    sb.git(&api, &["push", "--quiet", "origin", "main"]);
+    sb.ok(&sb.root, &["new", "bin", "repos/api"]);
+    let tree = sb.forest("bin").join("api");
+    fs::write(tree.join("blob"), [0u8, 9, 9, 9]).unwrap();
+    sb.git(&tree, &["commit", "--quiet", "--all", "--message", "ours"]);
+    sb.git(&tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
+    let forge = sb.forge("api");
+    fs::write(forge.join("blob"), [0u8, 7, 7, 7]).unwrap();
+    sb.git(
+        &forge,
+        &["commit", "--quiet", "--all", "--message", "theirs"],
+    );
+    sb.push_main_deleting(&forge, "bin");
+    sb.git(&tree, &["fetch", "--quiet", "--prune"]);
+
+    let refusal = sb.fails(&sb.root, &["burn", "bin"]);
+    assert!(
+        refusal.contains("1 commit(s) not pushed anywhere or landed on origin/main"),
+        "{refusal}"
+    );
+}

@@ -109,7 +109,9 @@ off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `cut`
 and `burn` refuse to delete uncommitted changes, or commits that are neither
 pushed nor landed on the base, unless you pass `--force`. Work has landed once
 everything its branch changed is on the base, so a regular, squash or rebase
-merge all count, even after the merged branch is deleted. Once the base branch
+merge all count, even after the merged branch is deleted. A squash merge still
+counts once the base has rewritten lines next to it, as lockfiles see all the
+time, unless a later commit reverts it. Once the base branch
 itself is gone, as a stacked branch's base is after it merges and the stacked
 pull request is retargeted, the repo's default branch (`origin/HEAD`) stands in
 for it. A base that lives on, such as a release branch, never has a stand-in.

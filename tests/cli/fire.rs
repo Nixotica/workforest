@@ -465,7 +465,7 @@ fn fire_burns_work_that_landed_without_being_pushed() {
 }
 
 #[test]
-fn fire_leaves_landed_work_it_can_no_longer_recognise() {
+fn fire_recognises_squashed_work_after_the_base_rewrites_lines_next_to_it() {
     let sb = Sandbox::new();
     let api = sb.repo("api");
     let lines: String = (1..=9).map(|n| format!("{n}\n")).collect();
@@ -489,15 +489,14 @@ fn fire_leaves_landed_work_it_can_no_longer_recognise() {
     sb.merge_on_remote("api", "near", Merge::Squash);
 
     // A later change to the line next to the landed one, as lockfiles see all
-    // the time, hides the landing from the reverse apply. The tree stays live
-    // rather than risk a wrong burn.
+    // the time, hides the landing from the reverse apply, but not the squash.
     let forge = sb.forge("api");
     edit(&forge, "5", "five");
     sb.git(&forge, &["push", "--quiet", "origin", "main"]);
 
     let out = sb.ok(&sb.root, &["fire", "--yes"]);
-    assert!(out.contains("1 other forest(s) in flight"), "{out}");
-    assert!(tree.is_dir());
+    assert!(out.contains("landed on origin/main\n"), "{out}");
+    assert!(!tree.exists());
 }
 
 #[test]

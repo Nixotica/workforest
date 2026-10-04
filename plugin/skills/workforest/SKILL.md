@@ -242,8 +242,9 @@ workforest burn <forest> --delete-branches
 
 A refusal after fetching means some of the work is not on the base: commits
 made after the merge, a merge that took only part of the branch, or a merge
-since reverted. It also refuses when the base has since rewritten lines next to
-the branch's changes, since it can no longer tell. Show the user what differs
+since reverted. A squash merge is recognised even after the base has rewritten
+lines next to it, but other merges aren't: then it refuses, since it can no
+longer tell. Show the user what differs
 (`git diff origin/<base> HEAD -- <files the branch changed>`) and ask; do not
 reach for `--force` on the user's behalf.
 

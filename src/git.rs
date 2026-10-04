@@ -1,13 +1,14 @@
 //! Thin wrappers over the `git` command line.
 
 use std::env;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 use crate::error::{Context, Result, bail};
 
@@ -384,9 +385,10 @@ pub fn fetch(repo: &Path, remote: &str) -> bool {
 /// merge: its whole diff applies to `base` in reverse. The check runs against a
 /// throwaway index, so it checks nothing out and writes nothing to the repo.
 ///
-/// Anything git cannot answer counts as not landed, and so does a base that has
-/// since changed lines next to the branch's changes, since a reverse apply needs
-/// each hunk's context to match exactly.
+/// A reverse apply needs each hunk's context to match exactly, so it misses
+/// work once the base has changed lines next to it, as lockfiles and busy files
+/// see all the time. A squash merge is still recognised then, by [`squashed`].
+/// Anything git cannot answer counts as not landed.
 pub fn landed(dir: &Path, base: &str, tip: &str) -> bool {
     let Some(fork) = output(dir, ["merge-base", base, tip]) else {
         return false;
@@ -405,7 +407,129 @@ pub fn landed(dir: &Path, base: &str, tip: &str) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success());
-    read && applies_in_reverse(dir, &index.0, &patch)
+    (read && applies_in_reverse(dir, &index.0, &patch)) || squashed(dir, &fork, base, tip)
+}
+
+/// Whether a commit on `base` since `fork` makes exactly the changes `tip`
+/// made since `fork`, as a squash merge does, and no later commit on `base`
+/// reverts them exactly. Changes are compared by `git patch-id`, without
+/// context lines, so lines `base` has changed next to them since don't matter.
+/// Older gits give every change to a binary file the same patch id, so binary
+/// files must also match by content.
+fn squashed(dir: &Path, fork: &str, base: &str, tip: &str) -> bool {
+    let only_change = |from: &str, to: &str| {
+        let ids = patch_ids(dir, &["diff", "--no-renames", "-U0", from, to])?;
+        ids.into_iter().next().map(|(id, _)| id)
+    };
+    let (Some(made), Some(undone)) = (only_change(fork, tip), only_change(tip, fork)) else {
+        return false;
+    };
+    let Some(paths) = stdout(
+        dir,
+        ["diff", "--no-renames", "--name-only", "-z", fork, tip],
+    ) else {
+        return false;
+    };
+    let range = format!("{fork}..{base}");
+    let mut log: Vec<&OsStr> = [
+        "log",
+        "--reverse",
+        "--no-renames",
+        "-U0",
+        "-p",
+        "--format=commit %H",
+        &range,
+        "--",
+    ]
+    .into_iter()
+    .map(OsStr::new)
+    .collect();
+    log.extend(nul_separated(&paths));
+    let Some(commits) = patch_ids(dir, &log) else {
+        return false;
+    };
+    // Oldest first, so that a revert cancels the squash before it, and a
+    // later squash of the same changes counts again.
+    let mut squash = None;
+    for (id, commit) in commits {
+        if id == made {
+            squash = Some(commit);
+        } else if id == undone {
+            squash = None;
+        }
+    }
+    squash.is_some_and(|squash| binaries_match(dir, fork, tip, &squash))
+}
+
+/// Whether `commit` has each binary file that `tip` changed since `fork` just
+/// as `tip` has it.
+fn binaries_match(dir: &Path, fork: &str, tip: &str, commit: &str) -> bool {
+    let Some(stats) = stdout(dir, ["diff", "--no-renames", "--numstat", "-z", fork, tip]) else {
+        return false;
+    };
+    let blob = |rev: &str, path: &[u8]| {
+        let mut spec = OsString::from(format!("{rev}:"));
+        spec.push(OsStr::from_bytes(path));
+        output(
+            dir,
+            [
+                OsStr::new("rev-parse"),
+                OsStr::new("--verify"),
+                OsStr::new("--quiet"),
+                &spec,
+            ],
+        )
+    };
+    nul_separated(&stats)
+        .filter_map(|stat| stat.as_bytes().strip_prefix(b"-\t-\t"))
+        .all(|path| blob(commit, path) == blob(tip, path))
+}
+
+/// The non-empty entries of git's `-z` output.
+fn nul_separated(list: &[u8]) -> impl Iterator<Item = &OsStr> {
+    list.split(|&byte| byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(OsStr::from_bytes)
+}
+
+/// The patch ids `git patch-id --stable` gives the output of `git <args>`,
+/// each with the commit it belongs to: one per commit of a `git log -p`, or one
+/// for a plain diff, which has none. An empty diff has no patch id.
+fn patch_ids<S: AsRef<OsStr>>(dir: &Path, args: &[S]) -> Option<Vec<(String, String)>> {
+    // After a hunk's line numbers, git adds the nearest line above it that
+    // looks like a function, which depends on lines the change didn't touch,
+    // and older gits count it in the patch id. It is dropped here.
+    let patches: Vec<u8> = stdout(dir, args)?
+        .split_inclusive(|&byte| byte == b'\n')
+        .flat_map(|line| match line.strip_prefix(b"@@ ") {
+            Some(rest) => match rest.windows(3).position(|end| end == b" @@") {
+                Some(end) => [b"@@ ", &rest[..end + 3], b"\n"].concat(),
+                None => line.to_vec(),
+            },
+            None => line.to_vec(),
+        })
+        .collect();
+    let mut patch_id = git(dir)
+        .args(["patch-id", "--stable"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdin = patch_id.stdin.take()?;
+    // Written from another thread, so that neither side waits on the other.
+    let writer = thread::spawn(move || stdin.write_all(&patches));
+    let ids = patch_id.wait_with_output().ok()?;
+    let fed = writer.join().is_ok_and(|written| written.is_ok());
+    if !fed || !ids.status.success() {
+        return None;
+    }
+    let ids = String::from_utf8_lossy(&ids.stdout)
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .map(|(id, commit)| (id.to_owned(), commit.to_owned()))
+        .collect();
+    Some(ids)
 }
 
 /// Whether `patch` applies in reverse to the tree in `index`.
