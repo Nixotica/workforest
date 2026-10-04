@@ -71,20 +71,36 @@ pub fn run(cli: Cli) -> Result<()> {
 
 fn new(config: &Config, args: NewArgs) -> Result<()> {
     let sources = main_worktrees(config, &args.repos)?;
+    check_sparse(&args.sparse.sparse)?;
     let graft = grafting(config, &args.caching)?;
     let forest = Forest::create(config, &args.forest)?;
     println!("new forest {} at {}", forest.name, forest.dir.display());
     if sources.is_empty() {
         return Ok(());
     }
-    plant_sources(&forest, sources, args.branching, graft)
+    plant_sources(&forest, sources, args.branching, &args.sparse.sparse, graft)
 }
 
 fn plant(config: &Config, args: PlantArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
     let sources = main_worktrees(config, &args.repos)?;
+    check_sparse(&args.sparse.sparse)?;
     let graft = grafting(config, &args.caching)?;
-    plant_sources(&forest, sources, args.branching, graft)
+    plant_sources(&forest, sources, args.branching, &args.sparse.sparse, graft)
+}
+
+/// `--sparse` takes directories inside the repo: relative, and not leaving it.
+fn check_sparse(dirs: &[String]) -> Result<()> {
+    for dir in dirs {
+        let path = Path::new(dir);
+        let leaves = path
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)));
+        if dir.is_empty() || dir.starts_with('-') || leaves {
+            bail!("--sparse takes directories inside the repo, such as src/api, not '{dir}'");
+        }
+    }
+    Ok(())
 }
 
 /// The size from which grafted cache files are hardlinked, or `None` if
@@ -113,6 +129,7 @@ fn plant_sources(
     forest: &Forest,
     sources: Vec<PathBuf>,
     branching: Branching,
+    sparse: &[String],
     graft: Option<u64>,
 ) -> Result<()> {
     let branch = branching.branch.unwrap_or_else(|| forest.name.clone());
@@ -126,15 +143,20 @@ fn plant_sources(
             .base
             .clone()
             .unwrap_or_else(|| git::default_base(&source));
-        git::add_worktree(&source, &dir, &branch, &base)?;
+        git::add_worktree(&source, &dir, &branch, &base, sparse)?;
         forest.record(Tree {
             repo: repo.clone(),
             source: source.clone(),
             branch: branch.clone(),
             base: base.clone(),
         })?;
+        let only = if sparse.is_empty() {
+            String::new()
+        } else {
+            format!(", only {}", sparse.join(" "))
+        };
         println!(
-            "planted {repo} -> {} (branch {branch}, off {base})",
+            "planted {repo} -> {} (branch {branch}, off {base}{only})",
             dir.display()
         );
         if let Some(link_min) = graft {
@@ -349,6 +371,8 @@ struct TreeStatus {
     /// without an upstream. Only counted for commits ahead that haven't
     /// landed: landed work is safe to burn whether or not it was pushed.
     unpushed: Option<u64>,
+    /// The directories it checks out, if it is a sparse checkout.
+    sparse: Option<Vec<String>>,
 }
 
 fn tree_status(forest: &Forest, tree: &Tree) -> TreeStatus {
@@ -359,6 +383,7 @@ fn tree_status(forest: &Forest, tree: &Tree) -> TreeStatus {
             ahead: None,
             behind: None,
             unpushed: None,
+            sparse: None,
         };
     }
     let ahead = git::count(&dir, &format!("{}..HEAD", tree.base));
@@ -378,6 +403,7 @@ fn tree_status(forest: &Forest, tree: &Tree) -> TreeStatus {
         ahead,
         behind,
         unpushed,
+        sparse: git::sparse_dirs(&dir),
     }
 }
 
@@ -395,6 +421,7 @@ fn status(config: &Config, args: ReportArgs) -> Result<()> {
                 shown["ahead"] = json!(status.ahead);
                 shown["behind"] = json!(status.behind);
                 shown["unpushed"] = json!(status.unpushed);
+                shown["sparse"] = json!(status.sparse);
                 shown
             })
             .collect();
@@ -421,8 +448,12 @@ fn status(config: &Config, args: ReportArgs) -> Result<()> {
             }
             _ => String::new(),
         };
+        let sparse = match &status.sparse {
+            Some(dirs) => format!(", sparse: {}", dirs.join(" ")),
+            None => String::new(),
+        };
         println!(
-            "  {:<24} {:<24} {:<6} +{}/-{} vs {}{push}",
+            "  {:<24} {:<24} {:<6} +{}/-{} vs {}{push}{sparse}",
             tree.repo,
             tree.branch,
             status.state.as_str(),

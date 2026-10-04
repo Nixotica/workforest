@@ -14,6 +14,7 @@ mod exec;
 mod fire;
 mod json;
 mod shells;
+mod sparse;
 
 /// A throwaway home holding a forest root, a repos root, and the remotes those
 /// repos were cloned from.

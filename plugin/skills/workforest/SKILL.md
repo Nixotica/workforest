@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.12.0 or later.
+This skill drives the `workforest` command-line tool, version 0.13.0 or later.
 Check that it is installed:
 
 ```sh
@@ -136,6 +136,10 @@ Options:
   to do, pass `--json` rather than parsing columns; the fields are listed under
   "JSON output" in the README.
 - `--no-cache` — on `new`/`plant`, don't graft the repos' build caches.
+- `--sparse <dir>...` — on `new`/`plant`, check out only those directories of
+  each repo, plus its top-level files. For a large repo where the work touches
+  a few directories; the main checkout and other trees stay whole. Put it after
+  the repo paths, since it takes every value up to the next flag.
 
 Repos are given as paths, absolute or relative to the current directory, where
 `.` is the repo you're in, or, once `workforest setup` has said where repos

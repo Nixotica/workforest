@@ -14,7 +14,11 @@ workforest burn auth-migration                        # refuses while any work w
 
 A forest with a single tree is normal. Trees are `git worktree`s, so they share
 their repo's object store: a tree costs its checked-out files, not a copy of
-the history.
+the history. In a large repo, `--sparse` cuts the checkout too:
+`workforest new fix-login ~/code/big --sparse services/auth docs` checks out
+only those directories, plus the top-level files, as a sparse checkout of the
+tree's own; the main checkout and other trees stay whole, and `status` shows
+which trees are sparse.
 
 ## Install
 

@@ -94,6 +94,8 @@ pub struct NewArgs {
     #[command(flatten)]
     pub branching: Branching,
     #[command(flatten)]
+    pub sparse: Sparse,
+    #[command(flatten)]
     pub caching: Caching,
 }
 
@@ -106,6 +108,8 @@ pub struct PlantArgs {
     pub target: Target,
     #[command(flatten)]
     pub branching: Branching,
+    #[command(flatten)]
+    pub sparse: Sparse,
     #[command(flatten)]
     pub caching: Caching,
 }
@@ -253,6 +257,15 @@ pub struct Target {
     /// Forest to act on [default: the forest containing the current directory]
     #[arg(short, long, add = ArgValueCompleter::new(complete::forests))]
     pub forest: Option<String>,
+}
+
+/// Which part of its repo a planted tree checks out.
+#[derive(Args)]
+pub struct Sparse {
+    /// Check out only these directories of each repo, plus its top-level
+    /// files, as a sparse checkout of the tree's own
+    #[arg(long, value_name = "DIR", num_args = 1..)]
+    pub sparse: Vec<String>,
 }
 
 /// Which branch a planted tree gets.
