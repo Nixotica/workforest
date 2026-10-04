@@ -147,14 +147,27 @@ pub fn branch_exists(repo: &Path, branch: &str) -> bool {
 }
 
 /// Add a worktree of `repo` at `dest` on `branch`, creating the branch from
-/// `base` unless it already exists.
-pub fn add_worktree(repo: &Path, dest: &Path, branch: &str, base: &str) -> Result<()> {
+/// `base` unless it already exists. Unless `sparse` is empty, the worktree
+/// checks out only those directories, plus the repo's top-level files, as a
+/// cone-mode sparse checkout of its own: the main checkout and other
+/// worktrees keep theirs.
+pub fn add_worktree(
+    repo: &Path,
+    dest: &Path,
+    branch: &str,
+    base: &str,
+    sparse: &[String],
+) -> Result<()> {
     let mut args = vec![
         OsStr::new("worktree"),
         OsStr::new("add"),
         OsStr::new("--quiet"),
     ];
-    if branch_exists(repo, branch) {
+    if !sparse.is_empty() {
+        args.push(OsStr::new("--no-checkout"));
+    }
+    let creating = !branch_exists(repo, branch);
+    if !creating {
         args.extend([dest.as_os_str(), OsStr::new(branch)]);
     } else {
         args.extend([
@@ -164,7 +177,35 @@ pub fn add_worktree(repo: &Path, dest: &Path, branch: &str, base: &str) -> Resul
             OsStr::new(base),
         ]);
     }
-    run(repo, args)
+    run(repo, args)?;
+    if sparse.is_empty() {
+        return Ok(());
+    }
+    // `init --cone` then `set`, since `set --cone` is newer than git 2.35.
+    let mut set = vec!["sparse-checkout", "set"];
+    set.extend(sparse.iter().map(String::as_str));
+    let checked_out = run(dest, ["sparse-checkout", "init", "--cone"])
+        .and_then(|()| run(dest, &set))
+        .and_then(|()| run(dest, ["checkout", "--quiet"]));
+    if checked_out.is_err() {
+        // Leave nothing half made.
+        let _ = remove_worktree(repo, dest, true);
+        if creating {
+            delete_branch(repo, branch);
+        }
+    }
+    checked_out
+}
+
+/// The directories the worktree at `dir` checks out, if it is a sparse
+/// checkout: its sparse-checkout patterns, which in cone mode are directories.
+pub fn sparse_dirs(dir: &Path) -> Option<Vec<String>> {
+    let sparse = output(dir, ["config", "--get", "--bool", "core.sparseCheckout"]);
+    if sparse.as_deref() != Some("true") {
+        return None;
+    }
+    let list = output(dir, ["sparse-checkout", "list"])?;
+    Some(list.lines().map(str::to_owned).collect())
 }
 
 /// Add a detached worktree of `repo` at `dest`, on the commit `repo` has
