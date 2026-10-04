@@ -122,7 +122,8 @@ pub fn judge(forest: &Forest, tree: &Tree) -> Verdict {
     // have this tree judged as that one.
     if !points_at(&record, &dir) {
         return Verdict::Unknown(
-            "its repo's record of it belongs to another worktree: `git worktree repair` it".into(),
+            "its repo's record of it belongs to another worktree: `git worktree repair` it"
+                .to_owned(),
         );
     }
     if record.join("locked").exists() {
