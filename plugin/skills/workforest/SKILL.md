@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.4.0 or later.
+This skill drives the `workforest` command-line tool, version 0.5.0 or later.
 Check that it is installed:
 
 ```sh
@@ -88,6 +88,7 @@ forest you're standing in.
 | `workforest plant <repo path>...` | add trees (worktrees) to a forest |
 | `workforest cut <tree>...` | remove trees from a forest, by name |
 | `workforest burn [forest]` | remove a forest and every tree in it |
+| `workforest fire` | burn every forest whose work has landed; a dry run unless `--yes` |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
@@ -113,7 +114,13 @@ Options:
   back to a local `main` or `master`.
 - `--force` — on `cut`/`burn`, skip the safety checks for uncommitted changes
   and for commits that are neither pushed nor landed.
-- `--delete-branches` — on `cut`/`burn`, also delete the trees' branches.
+- `--delete-branches` — on `cut`/`burn`/`fire`, also delete the trees'
+  branches. `fire` keeps any branch with commits not on its base.
+- `-y, --yes` — on `fire`, burn; without it, `fire` only lists what it would
+  burn and why.
+- `--scorch` — on `fire`, also cut dead trees out of forests that still have
+  live ones.
+- `--no-fetch` — on `fire`, judge the bases as last fetched.
 - `--no-cache` — on `new`/`plant`, don't graft the repos' build caches.
 
 Repos are always given as paths: absolute, or relative to the current
@@ -240,6 +247,27 @@ reach for `--force` on the user's behalf.
 Burning the forest you're standing in works, but leaves your shell in a
 directory that no longer exists; workforest then prints where to `cd`. Prefer
 `workforest burn <forest>` from outside the forest.
+
+### Every forest at once: `fire`
+
+`workforest fire` finds every forest whose work is done. It fetches the remotes
+the trees' bases are on, then judges each tree:
+
+| verdict | when |
+| --- | --- |
+| `dead` | its branch has commits of its own and they have all landed on its base, or its directory is gone. A base that is the branch's own remote branch only shows it was pushed, so the repo's default branch is used instead |
+| `live` | uncommitted changes, commits not on its base (an open pull request), or nothing committed yet |
+| `?` | git can't judge it, or it is locked: detached HEAD, another branch checked out, its base or its repo gone, its worktree record missing or taken by another worktree |
+
+A forest burns only when every tree in it is dead; `--scorch` also cuts dead
+trees out of forests that are still live. Without `--yes` it is a dry run that
+prints each forest it would burn or keep, and why. `fire` never removes
+anything `burn` would refuse, and has no `--force`.
+
+`fire` burns forests that other sessions and agents planted, not only yours.
+After landing work, run `workforest fire` as a dry run, show the user what it
+would burn, and ask before running it with `--yes`. To burn just the forest you
+finished, fetch and `burn` it as above.
 
 ## Guidance for Claude
 
