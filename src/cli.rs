@@ -21,7 +21,8 @@ Examples:
   workforest new auth-migration ~/code/api ~/code/web
   cd \"$(workforest path auth-migration)\"
   workforest plant ~/code/docs -B origin/release   a third tree, off another base
-  workforest burn auth-migration --delete-branches";
+  workforest burn auth-migration --delete-branches
+  workforest fire                                  which forests have landed, and why";
 
 /// One git worktree per repo in a piece of work, isolated from the main
 /// checkouts. A forest with a single tree is normal; several trees share one
@@ -46,6 +47,9 @@ pub enum Command {
     /// Burn a forest: remove it and every tree in it
     #[command(visible_aliases = ["rm", "delete"])]
     Burn(BurnArgs),
+    /// Burn every forest whose work has landed; a dry run unless --yes
+    #[command(after_help = FIRE_AFTER_HELP)]
+    Fire(FireArgs),
     /// List forests, or the trees in one
     #[command(visible_alias = "list")]
     Ls(LsArgs),
@@ -103,6 +107,36 @@ pub struct BurnArgs {
     pub removal: Removal,
 }
 
+const FIRE_AFTER_HELP: &str = "\
+A tree is dead when burn would accept it and its work has landed: its branch
+has commits of its own, and everything they changed is on its base, however
+they were merged. A tree whose directory is gone is dead too. A tree with
+uncommitted changes, with commits not on its base, or with nothing committed
+yet is live; one git can't judge is left alone.
+
+A forest burns when every tree in it is dead. fire never removes anything burn
+would refuse, and has no --force.
+
+Before judging, fire fetches the remotes the trees' bases are on, so their
+merges are seen.";
+
+#[derive(Args)]
+pub struct FireArgs {
+    /// Burn the dead forests; without this, only list them and why
+    #[arg(short, long)]
+    pub yes: bool,
+    /// Also cut dead trees out of forests that still have live ones
+    #[arg(long)]
+    pub scorch: bool,
+    /// Judge the bases as last fetched, without fetching them first
+    #[arg(long)]
+    pub no_fetch: bool,
+    /// Also delete the dead trees' branches from their repos, unless a branch
+    /// has commits not on its base
+    #[arg(long)]
+    pub delete_branches: bool,
+}
+
 #[derive(Args)]
 pub struct LsArgs {
     /// Forest whose trees to list [default: list every forest]
@@ -143,7 +177,7 @@ pub struct Caching {
 }
 
 /// How far removing a tree may go.
-#[derive(Args)]
+#[derive(Args, Clone, Copy)]
 pub struct Removal {
     /// Remove trees even if that loses uncommitted changes, or commits that are
     /// neither pushed nor landed on their base

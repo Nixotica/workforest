@@ -90,6 +90,7 @@ For other agents, put the skill wherever they read skills from.
 | `workforest plant <repo path>...` | add trees to a forest (alias: `add`) |
 | `workforest cut <tree>...` | remove trees from a forest, by name (alias: `remove`) |
 | `workforest burn [forest]` | remove a forest and every tree in it (aliases: `rm`, `delete`) |
+| `workforest fire` | burn every forest whose work has landed; a dry run unless `--yes` |
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
@@ -111,6 +112,18 @@ everything its branch changed is on the base, so a regular, squash or rebase
 merge all count, even after the merged branch is deleted. They check the base
 as you last fetched it: fetch after merging, then burn. Run
 `workforest help <command>` for the details.
+
+Forests pile up, and `workforest fire` clears them all at once. It fetches the
+remotes the trees' bases are on, then calls a tree dead when `burn` would accept
+it and its branch has commits of its own that have all landed on its base, or
+when its directory is gone. A tree with uncommitted changes, with commits not
+on its base, or with nothing committed yet is live, and one that git can't
+judge, such as one whose base branch was deleted, is left alone. A forest burns
+when every tree in it is dead: `fire` lists each such forest and why, and
+`fire --yes` burns them. `--scorch` also cuts dead trees out of forests that are
+still live, and `--delete-branches` deletes the dead trees' branches, keeping
+any with commits not on its base. `fire` never removes anything `burn` would
+refuse, and has no `--force`.
 
 Repos are given as paths, absolute or relative to the current directory:
 `wf new fix-login .` starts a forest for the repo you're in. workforest assumes

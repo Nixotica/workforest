@@ -6,6 +6,7 @@ mod cli;
 mod commands;
 mod config;
 mod error;
+mod fire;
 mod forest;
 mod git;
 
