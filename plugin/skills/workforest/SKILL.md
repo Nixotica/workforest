@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.10.0 or later.
+This skill drives the `workforest` command-line tool, version 0.12.0 or later.
 Check that it is installed:
 
 ```sh
@@ -99,6 +99,7 @@ forest you're standing in.
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
+| `workforest exec [-f <forest>] [--parallel [N]] -- <command>...` | run a command in every tree |
 | `workforest setup --repos <dir>...` | say where repos live, so that they can be named |
 | `workforest config` | each setting, its value, and where it comes from |
 | `workforest cache <sub>` | build caches: `status`, `graft`, `drop`, `paths`, `doctor` |
@@ -254,7 +255,7 @@ repo after merging, pruning deleted branches so that a deleted base looks
 gone, then burn:
 
 ```sh
-for t in "$(workforest path <forest>)"/*/; do git -C "$t" fetch --quiet --prune; done
+workforest exec -f <forest> -- git fetch --quiet --prune
 workforest burn <forest> --delete-branches
 ```
 
@@ -306,9 +307,12 @@ finished, fetch and `burn` it as above.
 - Work from a tree directory for single-repo changes; work from the forest root
   when the change spans repos — relative paths like `api/src/...` then resolve
   naturally, and each subdirectory is a normal repo.
-- For a sweep across every tree (status, each repo's tests, pushing), loop
-  over the forest's directories, e.g.
-  `for t in "$(workforest path <forest>)"/*/; do git -C "$t" push -u origin HEAD; done`.
+- For a sweep across every tree (each repo's tests, pushing, fetching), use
+  `workforest exec -- <command>`, e.g. `workforest exec -- git push -u origin HEAD`.
+  It runs the command as given in each tree, under a `=== <tree> ===` header,
+  and fails listing the trees it failed in. Wrap shell syntax in `sh -c '...'`.
+  `--parallel` runs several trees at once and prints each tree's output whole
+  as it finishes; keep the default for builds, which compete for CPU and disk.
 - Deleting a forest leaves the branches alone unless `--delete-branches` is
   passed, so a burned forest can be started again on the same branch names.
 - Build caches are grafted automatically. Use `--no-cache` only when a

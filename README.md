@@ -94,6 +94,7 @@ For other agents, put the skill wherever they read skills from.
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
+| `workforest exec [-f <forest>] [--parallel [N]] -- <command>...` | run a command in every tree |
 | `workforest setup [--repos <dir>...]` | say where your repos live, so that they can be named |
 | `workforest completions <shell>` | print the completion script for bash, zsh or fish |
 | `workforest shell-init <shell>` | print `wfcd`, a function that cds into a forest or one of its trees |
@@ -151,6 +152,27 @@ directories that aren't repos themselves, so `nodal-game` finds
 `~/code/nodal/nodal-game`. A name found more than once is an error that asks
 for a path. Forests live under the forest root, `~/.workforest` unless
 [configured](#configuration) otherwise.
+
+## Running a command in every tree
+
+`workforest exec -- <command>` runs a command in each tree of the forest you're
+in (or the one `-f` names), in order, each tree's output under a
+`=== <tree> ===` header:
+
+```sh
+workforest exec -- git push -u origin HEAD
+workforest exec --parallel -- cargo test        # one tree per CPU at a time
+workforest exec --parallel 2 -- sh -c 'make && make check'
+```
+
+The command runs as given, not through a shell, so wrap shell syntax in
+`sh -c`. It gets `WORKFOREST_FOREST` and `WORKFOREST_TREE`. Every tree runs even
+after one fails; then `exec` exits non-zero, listing each tree it failed in and
+why: an exit status, a command that couldn't start, or a tree whose directory
+is gone. `--parallel` runs up to N trees at once, one per CPU unless N is given,
+and gathers each tree's output and errors to print whole as the tree finishes,
+so trees never interleave. Running in order stays the default, since builds in
+several trees at once compete for CPU and disk.
 
 ## Shell integration
 

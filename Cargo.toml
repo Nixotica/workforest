@@ -1,6 +1,6 @@
 [package]
 name = "workforest"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 description = "Isolated git worktrees for every piece of work: one tree per repo, on a shared branch"
 license = "MIT"
