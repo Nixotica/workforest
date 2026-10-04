@@ -5,12 +5,13 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use clap::CommandFactory;
+use serde_json::{Value, json};
 
 use crate::cache;
 use crate::cli::{
     Branching, BurnArgs, CacheCommand, CacheDoctorArgs, CacheDropArgs, CacheGraftArgs,
     CachePathsArgs, Caching, Cli, Command, CutArgs, FireArgs, ForestArg, LsArgs, NewArgs,
-    PlantArgs, Removal, SetupArgs,
+    PlantArgs, Removal, ReportArgs, SetupArgs,
 };
 use crate::config::{self, Config};
 use crate::error::{Context, Result, bail};
@@ -144,17 +145,20 @@ fn cut(config: &Config, args: CutArgs) -> Result<()> {
         {
             bail!("{repo} has {risk}; commit/push it or re-run with --force");
         }
-        cut_tree(&forest, &tree, &args.removal)?;
+        cut_tree(&forest, &tree, &args.removal, false)?;
     }
     Ok(())
 }
 
-/// Remove one tree from `forest`, saying where to go if the shell was in it.
-fn cut_tree(forest: &Forest, tree: &Tree, removal: &Removal) -> Result<()> {
+/// Remove one tree from `forest`, saying so unless `quiet`, and saying where to
+/// go if the shell was in it.
+fn cut_tree(forest: &Forest, tree: &Tree, removal: &Removal, quiet: bool) -> Result<()> {
     let dir = forest.tree_dir(&tree.repo);
     let standing_in_it = cwd_is_within(&dir);
     remove_tree(forest, tree, removal)?;
-    println!("cut {} from {}", tree.repo, forest.name);
+    if !quiet {
+        println!("cut {} from {}", tree.repo, forest.name);
+    }
     if standing_in_it {
         point_out_of(&dir, &tree.source);
     }
@@ -187,12 +191,17 @@ fn burn(config: &Config, args: BurnArgs) -> Result<()> {
         }
     }
     let removals: Vec<_> = trees.into_iter().map(|tree| (tree, args.removal)).collect();
-    burn_forest(config, &forest, &removals)
+    burn_forest(config, &forest, &removals, false)
 }
 
 /// Remove each tree of `forest` as its removal says, then the forest itself,
-/// saying where to go if the shell was in it.
-fn burn_forest(config: &Config, forest: &Forest, trees: &[(Tree, Removal)]) -> Result<()> {
+/// saying so unless `quiet`, and saying where to go if the shell was in it.
+fn burn_forest(
+    config: &Config,
+    forest: &Forest,
+    trees: &[(Tree, Removal)],
+    quiet: bool,
+) -> Result<()> {
     let way_out = forest.contains_cwd().then(|| {
         trees
             .iter()
@@ -205,7 +214,9 @@ fn burn_forest(config: &Config, forest: &Forest, trees: &[(Tree, Removal)]) -> R
     }
     fs::remove_dir_all(&forest.dir)
         .context(format!("could not remove {}", forest.dir.display()))?;
-    println!("burned forest {}", forest.name);
+    if !quiet {
+        println!("burned forest {}", forest.name);
+    }
     if let Some(way_out) = way_out {
         point_out_of(&forest.dir, &way_out);
     }
@@ -245,6 +256,30 @@ fn remove_tree(forest: &Forest, tree: &Tree, removal: &Removal) -> Result<()> {
 }
 
 fn ls(config: &Config, args: LsArgs) -> Result<()> {
+    if args.output.json {
+        let forests = match &args.forest {
+            Some(name) => vec![Forest::named(config, name)?],
+            None => Forest::all(config)?,
+        };
+        let mut listed = Vec::new();
+        for forest in &forests {
+            let trees: Vec<Value> = forest
+                .trees()?
+                .iter()
+                .map(|tree| tree_json(forest, tree))
+                .collect();
+            listed.push(json!({
+                "name": forest.name,
+                "path": path_json(&forest.dir),
+                "trees": trees,
+            }));
+        }
+        print_json(json!({
+            "forest_root": path_json(&config.forest_root),
+            "forests": listed,
+        }));
+        return Ok(());
+    }
     if let Some(name) = args.forest {
         let forest = Forest::named(config, &name)?;
         println!("{}  {}", forest.name, forest.dir.display());
@@ -269,6 +304,8 @@ fn ls(config: &Config, args: LsArgs) -> Result<()> {
 /// What `status` reports about a tree's working copy.
 #[derive(Clone, Copy)]
 enum TreeState {
+    /// Its directory is gone.
+    Missing,
     /// Git could not say.
     Unknown,
     /// Uncommitted changes.
@@ -283,6 +320,7 @@ enum TreeState {
 impl TreeState {
     fn as_str(self) -> &'static str {
         match self {
+            Self::Missing => "MISSING",
             Self::Unknown => "?",
             Self::Dirty => "dirty",
             Self::Landed => "landed",
@@ -291,27 +329,84 @@ impl TreeState {
     }
 }
 
-fn status(config: &Config, args: ForestArg) -> Result<()> {
+/// What `status` finds out about one tree.
+struct TreeStatus {
+    state: TreeState,
+    ahead: Option<u64>,
+    behind: Option<u64>,
+    /// How many commits ahead of the base its upstream lacks, all of them
+    /// without an upstream. Only counted for commits ahead that haven't
+    /// landed: landed work is safe to burn whether or not it was pushed.
+    unpushed: Option<u64>,
+}
+
+fn tree_status(forest: &Forest, tree: &Tree) -> TreeStatus {
+    let dir = forest.tree_dir(&tree.repo);
+    if !dir.is_dir() {
+        return TreeStatus {
+            state: TreeState::Missing,
+            ahead: None,
+            behind: None,
+            unpushed: None,
+        };
+    }
+    let ahead = git::count(&dir, &format!("{}..HEAD", tree.base));
+    let behind = git::count(&dir, &format!("HEAD..{}", tree.base));
+    let state = match git::is_dirty(&dir) {
+        Some(true) => TreeState::Dirty,
+        Some(false) if head_landed(&dir, tree) => TreeState::Landed,
+        Some(false) => TreeState::Clean,
+        None => TreeState::Unknown,
+    };
+    let unpushed = match ahead {
+        Some(ahead) if ahead > 0 && !matches!(state, TreeState::Landed) => unpushed(&dir, ahead),
+        _ => None,
+    };
+    TreeStatus {
+        state,
+        ahead,
+        behind,
+        unpushed,
+    }
+}
+
+fn status(config: &Config, args: ReportArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.forest.as_deref(), NAME_AS_ARGUMENT)?;
+    let trees = forest.trees()?;
+    if args.output.json {
+        let trees: Vec<Value> = trees
+            .iter()
+            .map(|tree| {
+                let status = tree_status(&forest, tree);
+                let mut shown = tree_json(&forest, tree);
+                shown["state"] =
+                    json!(status.state.as_str().to_lowercase().replace('?', "unknown"));
+                shown["ahead"] = json!(status.ahead);
+                shown["behind"] = json!(status.behind);
+                shown["unpushed"] = json!(status.unpushed);
+                shown
+            })
+            .collect();
+        print_json(json!({
+            "name": forest.name,
+            "path": path_json(&forest.dir),
+            "trees": trees,
+        }));
+        return Ok(());
+    }
     println!("{}  {}", forest.name, forest.dir.display());
-    for tree in forest.trees()? {
-        let dir = forest.tree_dir(&tree.repo);
-        if !dir.is_dir() {
+    for tree in &trees {
+        let status = tree_status(&forest, tree);
+        if let TreeState::Missing = status.state {
             println!("  {:<24} MISSING", tree.repo);
             continue;
         }
-        let ahead = git::count(&dir, &format!("{}..HEAD", tree.base));
-        let behind = git::count(&dir, &format!("HEAD..{}", tree.base));
-        let state = match git::is_dirty(&dir) {
-            Some(true) => TreeState::Dirty,
-            Some(false) if head_landed(&dir, &tree) => TreeState::Landed,
-            Some(false) => TreeState::Clean,
-            None => TreeState::Unknown,
-        };
-        // Landed work is safe to burn whether or not it was pushed.
-        let push = match ahead {
-            Some(ahead) if ahead > 0 && !matches!(state, TreeState::Landed) => {
-                format!(", {}", push_state(&dir, ahead))
+        let push = match (status.ahead, status.state) {
+            (Some(ahead), state) if ahead > 0 && !matches!(state, TreeState::Landed) => {
+                match status.unpushed {
+                    Some(0) => ", pushed".to_owned(),
+                    unpushed => format!(", {} unpushed", count_or_unknown(unpushed)),
+                }
             }
             _ => String::new(),
         };
@@ -319,9 +414,9 @@ fn status(config: &Config, args: ForestArg) -> Result<()> {
             "  {:<24} {:<24} {:<6} +{}/-{} vs {}{push}",
             tree.repo,
             tree.branch,
-            state.as_str(),
-            count_or_unknown(ahead),
-            count_or_unknown(behind),
+            status.state.as_str(),
+            count_or_unknown(status.ahead),
+            count_or_unknown(status.behind),
             tree.base
         );
     }
@@ -335,63 +430,95 @@ fn head_landed(dir: &Path, tree: &Tree) -> bool {
     fire::landed_on(dir, tree, branch.as_deref()).is_some()
 }
 
-/// Whether the tree at `dir`, `ahead` commits ahead of its base, has them all
-/// on its upstream, else how many its upstream lacks. As `burn` sees it, none
-/// are pushed when the branch has no upstream.
-fn push_state(dir: &Path, ahead: u64) -> String {
-    let unpushed = if git::has_upstream(dir) {
+/// How many of the `ahead` commits of the tree at `dir` its upstream lacks. As
+/// `burn` sees it, none are pushed when the branch has no upstream.
+fn unpushed(dir: &Path, ahead: u64) -> Option<u64> {
+    if git::has_upstream(dir) {
         git::count(dir, "@{upstream}..HEAD")
     } else {
         Some(ahead)
-    };
-    match unpushed {
-        Some(0) => "pushed".to_owned(),
-        unpushed => format!("{} unpushed", count_or_unknown(unpushed)),
     }
 }
 
+/// The version of the shape of the JSON that commands print. It goes up only
+/// when a change would break a reader, not when fields are added.
+const JSON_SCHEMA: u64 = 1;
+
+/// Print a JSON report: `report`, an object, with the schema version added.
+fn print_json(mut report: Value) {
+    report["schema"] = json!(JSON_SCHEMA);
+    // A reader that stops early, such as `head`, isn't an error.
+    let _ = writeln!(io::stdout().lock(), "{report:#}");
+}
+
+/// A path as JSON: a string, with any bytes that aren't UTF-8 replaced.
+fn path_json(path: &Path) -> Value {
+    json!(path.to_string_lossy())
+}
+
+/// What the manifest records about `tree`, as JSON.
+fn tree_json(forest: &Forest, tree: &Tree) -> Value {
+    json!({
+        "repo": tree.repo,
+        "path": path_json(&forest.tree_dir(&tree.repo)),
+        "source": path_json(&tree.source),
+        "branch": tree.branch,
+        "base": tree.base,
+    })
+}
+
 fn fire(config: &Config, args: FireArgs) -> Result<()> {
+    let json = args.output.json;
     let forests = Forest::all(config)?;
     if !args.no_fetch {
         fire::fetch_bases(&forests);
     }
     let (mut burns, mut cuts, mut kept_with_dead, mut in_flight, mut failures) = (0, 0, 0, 0, 0);
+    let mut reported = Vec::new();
     for forest in forests {
         let name = forest.name.clone();
         let judgement = match fire::judge_forest(forest) {
             Ok(judgement) => judgement,
             Err(err) => {
                 eprintln!("workforest: {name}: {err}");
+                reported.push(json!({"name": name, "error": err.to_string()}));
                 failures += 1;
                 continue;
             }
         };
-        if judgement.is_in_flight() {
-            in_flight += 1;
-            continue;
-        }
         let dead = judgement.is_dead();
         let has_dead = judgement.dead_trees().next().is_some();
         let cutting = !dead && has_dead && args.scorch;
+        let action = if dead {
+            "burn"
+        } else if cutting {
+            "cut"
+        } else {
+            "keep"
+        };
         if !dead && has_dead && !args.scorch {
             kept_with_dead += 1;
         }
-        println!(
-            "{name}  {}",
-            if dead {
-                "burn"
-            } else if cutting {
+        let quiet = json || judgement.is_in_flight();
+        if judgement.is_in_flight() {
+            in_flight += 1;
+        } else if !json {
+            let header = if cutting {
                 "cut its dead trees"
             } else {
-                "keep"
-            }
-        );
+                action
+            };
+            println!("{name}  {header}");
+        }
         let mut removals = Vec::new();
+        let mut trees = Vec::new();
         for (tree, verdict) in &judgement.trees {
             let mut reason = verdict.reason().to_owned();
+            let mut keeps_branch = false;
             if verdict.is_dead() && (dead || cutting) {
                 let delete_branch = args.delete_branches && fire::branch_spent(tree);
-                if args.delete_branches && !delete_branch {
+                keeps_branch = args.delete_branches && !delete_branch;
+                if keeps_branch {
                     reason.push_str(&format!(
                         "; keeps branch {}, which has commits not on {}",
                         tree.branch, tree.base
@@ -403,56 +530,80 @@ fn fire(config: &Config, args: FireArgs) -> Result<()> {
                 };
                 removals.push((tree.clone(), removal));
             }
-            println!("  {:<24} {:<6} {reason}", tree.repo, verdict.label());
+            if !quiet {
+                println!("  {:<24} {:<6} {reason}", tree.repo, verdict.label());
+            }
+            trees.push(json!({
+                "repo": tree.repo,
+                "verdict": verdict.label().replace('?', "unknown"),
+                "reason": verdict.reason(),
+                "keeps_branch": keeps_branch,
+            }));
         }
-        for stray in &judgement.strays {
-            println!(
-                "  {stray:<24} {:<6} a checkout the manifest doesn't record",
-                "?"
-            );
-        }
-        if dead && judgement.trees.is_empty() {
-            println!("  no trees");
+        if !quiet {
+            for stray in &judgement.strays {
+                println!(
+                    "  {stray:<24} {:<6} a checkout the manifest doesn't record",
+                    "?"
+                );
+            }
+            if dead && judgement.trees.is_empty() {
+                println!("  no trees");
+            }
         }
         if dead {
             burns += 1;
         } else if cutting {
             cuts += removals.len();
         }
-        if !args.yes {
-            continue;
+        let mut done = None;
+        if args.yes && action != "keep" {
+            let outcome = if dead {
+                burn_forest(config, &judgement.forest, &removals, json)
+            } else {
+                removals.iter().try_for_each(|(tree, removal)| {
+                    cut_tree(&judgement.forest, tree, removal, json)
+                })
+            };
+            if let Err(err) = &outcome {
+                eprintln!("workforest: {name}: {err}");
+                failures += 1;
+            }
+            done = Some(outcome.map_err(|err| err.to_string()));
         }
-        let done = if dead {
-            burn_forest(config, &judgement.forest, &removals)
-        } else {
-            removals
-                .iter()
-                .try_for_each(|(tree, removal)| cut_tree(&judgement.forest, tree, removal))
-        };
-        if let Err(err) = done {
-            eprintln!("workforest: {name}: {err}");
-            failures += 1;
-        }
+        reported.push(json!({
+            "name": name,
+            "path": path_json(&judgement.forest.dir),
+            "action": action,
+            "trees": trees,
+            "strays": judgement.strays,
+            "done": done.as_ref().map(|outcome| outcome.is_ok()),
+            "error": done.and_then(|outcome| outcome.err()),
+        }));
     }
-    if in_flight > 0 {
-        println!("{in_flight} other forest(s) in flight");
-    }
-    if kept_with_dead > 0 {
-        println!(
-            "{kept_with_dead} forest(s) kept for their live trees hold dead ones; --scorch cuts those"
-        );
-    }
-    if burns == 0 && cuts == 0 {
-        println!("nothing to burn");
-    } else if !args.yes {
-        let mut plan = Vec::new();
-        if burns > 0 {
-            plan.push(format!("burn {burns} forest(s)"));
+    if json {
+        print_json(json!({"dry_run": !args.yes, "forests": reported}));
+    } else {
+        if in_flight > 0 {
+            println!("{in_flight} other forest(s) in flight");
         }
-        if cuts > 0 {
-            plan.push(format!("cut {cuts} tree(s)"));
+        if kept_with_dead > 0 {
+            println!(
+                "{kept_with_dead} forest(s) kept for their live trees hold dead ones; --scorch cuts those"
+            );
         }
-        println!("dry run: pass --yes to {}", plan.join(" and "));
+        if burns == 0 && cuts == 0 {
+            println!("nothing to burn");
+        } else if !args.yes {
+            let mut plan = Vec::new();
+            if burns > 0 {
+                plan.push(format!("burn {burns} forest(s)"));
+            }
+            if cuts > 0 {
+                plan.push(format!("cut {cuts} tree(s)"));
+            }
+            println!("dry run: pass --yes to {}", plan.join(" and "));
+        }
     }
     if failures > 0 {
         bail!("could not finish with {failures} forest(s)");
@@ -537,25 +688,66 @@ fn path(config: &Config, args: ForestArg) -> Result<()> {
     Ok(())
 }
 
-fn cache_status(config: &Config, args: ForestArg) -> Result<()> {
+fn cache_status(config: &Config, args: ReportArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.forest.as_deref(), NAME_AS_ARGUMENT)?;
-    println!("{}  {}", forest.name, forest.dir.display());
+    let json = args.output.json;
+    if !json {
+        println!("{}  {}", forest.name, forest.dir.display());
+    }
+    let mut trees = Vec::new();
     for tree in forest.trees()? {
         let dir = forest.tree_dir(&tree.repo);
+        let mut shown = tree_json(&forest, &tree);
         if !dir.is_dir() {
-            println!("  {:<24} MISSING", tree.repo);
+            if !json {
+                println!("  {:<24} MISSING", tree.repo);
+            }
+            shown["missing"] = json!(true);
+            trees.push(shown);
             continue;
         }
         let declared = cache::declared(&tree.source);
         cache::warn(&declared.warnings);
-        if declared.entries.is_empty() {
-            println!("  {:<24} no caches declared", tree.repo);
-            continue;
+        if !json {
+            if declared.entries.is_empty() {
+                println!("  {:<24} no caches declared", tree.repo);
+            } else {
+                println!("  {}", tree.repo);
+            }
         }
-        println!("  {}", tree.repo);
+        let mut caches = Vec::new();
         for entry in &declared.entries {
-            println!("    {:<22} {}", entry.path, cache::describe(&dir, entry));
+            if !json {
+                println!("    {:<22} {}", entry.path, cache::describe(&dir, entry));
+                continue;
+            }
+            let mut cache = json!({"path": entry.path, "mode": entry.mode.to_string()});
+            match cache::state(&dir, entry) {
+                cache::CacheState::Never => cache["state"] = json!("never"),
+                cache::CacheState::Cold => cache["state"] = json!("cold"),
+                cache::CacheState::Blocked(problem) => {
+                    cache["state"] = json!("blocked");
+                    cache["problem"] = json!(problem);
+                }
+                cache::CacheState::Grafted(usage) => {
+                    cache["state"] = json!("grafted");
+                    cache["files"] = json!(usage.files);
+                    cache["shared_bytes"] = json!(usage.shared);
+                    cache["own_bytes"] = json!(usage.own);
+                }
+            }
+            caches.push(cache);
         }
+        shown["missing"] = json!(false);
+        shown["caches"] = json!(caches);
+        trees.push(shown);
+    }
+    if json {
+        print_json(json!({
+            "name": forest.name,
+            "path": path_json(&forest.dir),
+            "trees": trees,
+        }));
     }
     Ok(())
 }

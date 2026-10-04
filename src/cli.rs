@@ -57,7 +57,7 @@ pub enum Command {
     Ls(LsArgs),
     /// Show each tree's branch, whether it is dirty or pushed, and how far it is from its base
     #[command(visible_alias = "st")]
-    Status(ForestArg),
+    Status(ReportArgs),
     /// Print a forest's path
     #[command(visible_alias = "dir")]
     Path(ForestArg),
@@ -135,6 +135,8 @@ pub struct FireArgs {
     /// Burn the dead forests; without this, only list them and why
     #[arg(short, long)]
     pub yes: bool,
+    #[command(flatten)]
+    pub output: Output,
     /// Also cut dead trees out of forests that still have live ones
     #[arg(long)]
     pub scorch: bool,
@@ -159,6 +161,25 @@ pub struct SetupArgs {
 pub struct LsArgs {
     /// Forest whose trees to list [default: list every forest]
     pub forest: Option<String>,
+    #[command(flatten)]
+    pub output: Output,
+}
+
+/// A forest to report on, and how.
+#[derive(Args)]
+pub struct ReportArgs {
+    /// Forest to act on [default: the forest containing the current directory]
+    pub forest: Option<String>,
+    #[command(flatten)]
+    pub output: Output,
+}
+
+/// How a report is printed.
+#[derive(Args)]
+pub struct Output {
+    /// Print JSON for scripts and agents; see "JSON output" in the README
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args)]
@@ -239,7 +260,7 @@ pub struct CacheArgs {
 pub enum CacheCommand {
     /// Show how much of each tree's caches is still hardlinked to the main checkout
     #[command(visible_alias = "st")]
-    Status(ForestArg),
+    Status(ReportArgs),
     /// Graft caches into trees that are already planted
     Graft(CacheGraftArgs),
     /// Delete trees' grafted clone caches

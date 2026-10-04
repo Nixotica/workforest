@@ -283,21 +283,39 @@ fn check_replaceable(tree: &Path, path: &str, dir: bool) -> Result<()> {
 /// What the tree at `tree` has of the cache `entry` declares: how much of it
 /// is still hardlinked to the main checkout, or why there's nothing to count.
 pub fn describe(tree: &Path, entry: &Entry) -> String {
+    match state(tree, entry) {
+        CacheState::Never => "never".to_owned(),
+        CacheState::Cold => "cold".to_owned(),
+        CacheState::Blocked(problem) => problem,
+        CacheState::Grafted(usage) => format!(
+            "{}, {} hardlinked, {} own",
+            count(usage.files, "file"),
+            human_bytes(usage.shared),
+            human_bytes(usage.own)
+        ),
+    }
+}
+
+/// Where a tree's cache stands.
+pub enum CacheState {
+    /// Its mode says to leave it cold.
+    Never,
+    /// It has none.
+    Cold,
+    /// workforest won't touch it, for the reason given.
+    Blocked(String),
+    /// It has one, sharing this much with the main checkout.
+    Grafted(clone::Usage),
+}
+
+pub fn state(tree: &Path, entry: &Entry) -> CacheState {
     let path = tree.join(&entry.path);
     match entry.mode {
-        Mode::Never => "never".to_owned(),
-        Mode::Clone if path.is_symlink() || !path.is_dir() => "cold".to_owned(),
+        Mode::Never => CacheState::Never,
+        Mode::Clone if path.is_symlink() || !path.is_dir() => CacheState::Cold,
         Mode::Clone => match check_replaceable(tree, &entry.path, true) {
-            Err(err) => err.to_string(),
-            Ok(()) => {
-                let usage = clone::usage(&path);
-                format!(
-                    "{}, {} hardlinked, {} own",
-                    count(usage.files, "file"),
-                    human_bytes(usage.shared),
-                    human_bytes(usage.own)
-                )
-            }
+            Err(err) => CacheState::Blocked(err.to_string()),
+            Ok(()) => CacheState::Grafted(clone::usage(&path)),
         },
     }
 }

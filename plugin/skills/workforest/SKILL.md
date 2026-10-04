@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.9.0 or later.
+This skill drives the `workforest` command-line tool, version 0.10.0 or later.
 Check that it is installed:
 
 ```sh
@@ -130,6 +130,10 @@ Options:
 - `--scorch` — on `fire`, also cut dead trees out of forests that still have
   live ones.
 - `--no-fetch` — on `fire`, judge the bases as last fetched.
+- `--json` — on `ls`, `status`, `cache status` and `fire`, print one JSON object
+  instead of columns. Whenever you read these commands' output to decide what
+  to do, pass `--json` rather than parsing columns; the fields are listed under
+  "JSON output" in the README.
 - `--no-cache` — on `new`/`plant`, don't graft the repos' build caches.
 
 Repos are given as paths, absolute or relative to the current directory, where
