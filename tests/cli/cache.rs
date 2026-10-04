@@ -131,6 +131,47 @@ fn planting_hardlinks_large_cache_files_and_copies_small_ones() {
 }
 
 #[test]
+fn a_graft_of_many_files_in_nested_directories_misses_none() {
+    let sb = Sandbox::new();
+    let repo = sb.cached_repo("api", "build clone\n");
+    let build = repo.join("build");
+    // Fifty directories, nested ten deep in five chains, forty files each:
+    // a graft spread over threads must create each directory first.
+    let mut files = Vec::new();
+    for chain in 0..5 {
+        let mut dir = build.clone();
+        for depth in 0..10 {
+            dir = dir.join(format!("c{chain}d{depth}"));
+            for n in 0..40 {
+                let file = dir.join(format!("f{n}"));
+                let size = if n % 4 == 0 {
+                    LINK_MIN + n
+                } else {
+                    n * 100 + 1
+                };
+                write(&file, size);
+                files.push((file, size));
+            }
+        }
+    }
+
+    let out = sb.ok(&sb.root, &["new", "many", "repos/api"]);
+
+    assert!(out.contains(": 2000 files, "), "{out}");
+    let grafted = sb.forest("many").join("api/build");
+    for (file, size) in &files {
+        let copy = grafted.join(file.strip_prefix(&build).unwrap());
+        assert_eq!(meta(&copy).len(), *size as u64, "{}", copy.display());
+        assert_eq!(
+            same_file(file, &copy),
+            *size >= LINK_MIN,
+            "{}",
+            copy.display()
+        );
+    }
+}
+
+#[test]
 fn always_copy_globs_copy_matching_files_whatever_their_size() {
     let sb = Sandbox::new();
     let repo = sb.cached_repo("api", "build clone *.lock,state/*\n");

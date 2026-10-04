@@ -21,7 +21,10 @@
 use std::fs::{self, File, FileTimes, Metadata};
 use std::io;
 use std::os::unix::fs::{MetadataExt, symlink};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, mpsc};
+use std::thread;
 use std::time::SystemTime;
 
 use super::glob::Glob;
@@ -44,6 +47,11 @@ pub struct Cloned {
 
 /// Clone the directory `src`, in the main checkout at `main`, to `dst`, which
 /// must not exist yet.
+///
+/// The walk creates each directory before anything in it, and hands files and
+/// symlinks to a thread per CPU, at most eight, which copy and link them: a
+/// graft is mostly small copies, each a few system calls, and spreading them
+/// out is several times faster than one thread on a fast disk.
 pub fn clone_dir(
     src: &Path,
     dst: &Path,
@@ -53,36 +61,116 @@ pub fn clone_dir(
 ) -> io::Result<Cloned> {
     let always_copy: Vec<Glob> = always_copy.iter().map(|glob| Glob::new(glob)).collect();
     fs::create_dir(dst)?;
-    let mut cloned = Cloned::default();
-    for item in walk(src) {
-        let (rel, meta) = item?;
-        let (from, to) = (src.join(&rel), dst.join(&rel));
-        let kind = meta.file_type();
-        if kind.is_dir() {
-            fs::create_dir(&to)?;
-        } else if kind.is_symlink() {
-            let target = fs::read_link(&from)?;
-            if target.is_absolute() && target.starts_with(main) {
-                cloned.links_to_main += 1;
+    let threads = thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(8);
+    let (send, receive) = mpsc::sync_channel::<(PathBuf, Metadata)>(1024);
+    let receive = Mutex::new(receive);
+    let failed = AtomicBool::new(false);
+    thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut cloned = Cloned::default();
+                    loop {
+                        let next = receive.lock().ok().and_then(|receive| receive.recv().ok());
+                        let Some((rel, meta)) = next else {
+                            return Ok(cloned);
+                        };
+                        let item = Item {
+                            rel: &rel,
+                            meta: &meta,
+                        };
+                        if let Err(err) =
+                            clone_item(src, dst, main, link_min, &always_copy, item, &mut cloned)
+                        {
+                            failed.store(true, Ordering::Relaxed);
+                            return Err(err);
+                        }
+                    }
+                })
+            })
+            .collect();
+        let walked = (|| {
+            for item in walk(src) {
+                let (rel, meta) = item?;
+                if failed.load(Ordering::Relaxed) {
+                    break;
+                }
+                if meta.is_dir() {
+                    fs::create_dir(dst.join(&rel))?;
+                } else if send.send((rel, meta)).is_err() {
+                    break;
+                }
             }
-            symlink(target, &to)?;
-            cloned.files += 1;
-        } else if kind.is_file() {
-            cloned.files += 1;
-            cloned.newest = cloned.newest.max(meta.modified().ok());
-            let link = meta.len() >= link_min && !always_copy.iter().any(|glob| glob.matches(&rel));
-            // Hardlinking fails once a file has as many links as the
-            // filesystem allows; a copy is always safe.
-            if link && fs::hard_link(&from, &to).is_ok() {
-                cloned.linked += meta.len();
-            } else {
-                copy_file(&from, &to, &meta)?;
-                cloned.copied += meta.len();
-            }
+            Ok(())
+        })();
+        // Closing the channel ends the workers once it is drained.
+        drop(send);
+        let mut cloned = Cloned::default();
+        for worker in workers {
+            let done: io::Result<Cloned> = worker
+                .join()
+                .unwrap_or_else(|_| Err(io::Error::other("a cloning thread panicked")));
+            cloned.add(done?);
         }
-        // Sockets, FIFOs and devices aren't build output; they stay behind.
+        walked.map(|()| cloned)
+    })
+}
+
+/// One file or symlink to clone: its path relative to the cache, and its
+/// metadata.
+struct Item<'a> {
+    rel: &'a Path,
+    meta: &'a Metadata,
+}
+
+/// Clone one file or symlink, counting it in `cloned`.
+fn clone_item(
+    src: &Path,
+    dst: &Path,
+    main: &Path,
+    link_min: u64,
+    always_copy: &[Glob],
+    item: Item,
+    cloned: &mut Cloned,
+) -> io::Result<()> {
+    let Item { rel, meta } = item;
+    let (from, to) = (src.join(rel), dst.join(rel));
+    let kind = meta.file_type();
+    if kind.is_symlink() {
+        let target = fs::read_link(&from)?;
+        if target.is_absolute() && target.starts_with(main) {
+            cloned.links_to_main += 1;
+        }
+        symlink(target, &to)?;
+        cloned.files += 1;
+    } else if kind.is_file() {
+        cloned.files += 1;
+        cloned.newest = cloned.newest.max(meta.modified().ok());
+        let link = meta.len() >= link_min && !always_copy.iter().any(|glob| glob.matches(rel));
+        // Hardlinking fails once a file has as many links as the filesystem
+        // allows; a copy is always safe.
+        if link && fs::hard_link(&from, &to).is_ok() {
+            cloned.linked += meta.len();
+        } else {
+            copy_file(&from, &to, meta)?;
+            cloned.copied += meta.len();
+        }
     }
-    Ok(cloned)
+    // Sockets, FIFOs and devices aren't build output; they stay behind.
+    Ok(())
+}
+
+impl Cloned {
+    /// Count what `other` cloned in this too.
+    fn add(&mut self, other: Cloned) {
+        self.files += other.files;
+        self.linked += other.linked;
+        self.copied += other.copied;
+        self.links_to_main += other.links_to_main;
+        self.newest = self.newest.max(other.newest);
+    }
 }
 
 /// Copy `from`, whose metadata is `meta`, to `to`, keeping its times.
