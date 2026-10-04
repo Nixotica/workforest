@@ -100,6 +100,7 @@ fn copy_file(from: &Path, to: &Path, meta: &Metadata) -> io::Result<()> {
 /// hardlinks, and how much is its own.
 #[derive(Default)]
 pub struct Usage {
+    /// Regular files, each counted once.
     pub files: u64,
     pub shared: u64,
     pub own: u64,

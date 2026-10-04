@@ -248,6 +248,24 @@ directory under the forest root, until the next doctor of that repo removes it.
 files are hardlinked. On btrfs and XFS a copy shares its data until written, so it
 costs little disk either.
 
+## JSON output
+
+`ls`, `status`, `cache status` and `fire` take `--json` and print one JSON
+object instead of their columns, for scripts and agents. Every object has a
+`schema` field, now `1`, which goes up only when a change would break a reader;
+new fields can appear without it. Paths are strings, and counts are `null` where
+git couldn't tell.
+
+| command | object |
+| --- | --- |
+| `ls [forest] --json` | `forest_root`, and `forests`: each with `name`, `path`, and `trees`: each with `repo`, `path`, `source` (its repo's main checkout), `branch`, `base` |
+| `status [forest] --json` | the forest's `name`, `path`, and `trees`: as for `ls`, plus `state` (`clean`, `dirty`, `landed`, `missing` or `unknown`), `ahead` and `behind` its base, and `unpushed`: how many commits ahead its upstream lacks, or `null` when that doesn't matter because nothing is ahead or it has landed |
+| `cache status [forest] --json` | the forest's `name`, `path`, and `trees`: as for `ls`, plus `missing`, and `caches`: each with `path`, `mode`, and `state`: `grafted` (with `files`, `shared_bytes` hardlinked to the main checkout and `own_bytes`), `cold`, `never`, or `blocked` (with `problem`) |
+| `fire --json` | `dry_run`, and `forests`, every one, in flight or not: each with `name`, `path`, `action` (`burn`, `cut` or `keep`), `trees` (each with `repo`, `verdict`: `dead`, `live` or `unknown`, `reason`, and `keeps_branch`), `strays` (checkouts its manifest doesn't record), and, with `--yes`, `done` and `error`. A forest that couldn't be read has only `name` and `error` |
+
+With `--json`, `fire --yes` prints nothing but the object; where to `cd`
+after burning the forest you're in still goes to stderr.
+
 ## Configuration
 
 Settings live in `$XDG_CONFIG_HOME/workforest/config.toml`, which is
