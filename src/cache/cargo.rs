@@ -60,6 +60,12 @@ pub const CARGO: Ecosystem = Ecosystem {
         // Superseded incremental sessions: rustc starts a new session in the
         // tree, and leaves these unread until it deletes them.
         "incremental/*",
+        // Object files rustc keeps beside a debug build for debuggers, as it
+        // does by default on macOS (split-debuginfo=unpacked). Their debug
+        // info records the source paths they were compiled from, but no
+        // build reads them back: a debugger may show the main checkout's
+        // paths for code the tree reused from its cache, and that's all.
+        "deps/*.o",
     ],
     build: "cargo build --all-targets && cargo doc",
 };

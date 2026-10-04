@@ -305,7 +305,9 @@ prove that a cache works at another path, which takes knowing what the build
 reads, so it lists the grafted files that name the main checkout's path: that
 is how a cache records where it was built. In a cargo repo it leaves out the
 files that name the main checkout without tying the tree's build to it: rustc's
-dep-info, build scripts' `root-output`, and superseded incremental sessions. Known not to work at another path: a Python `.venv` (its
+dep-info, build scripts' `root-output`, superseded incremental sessions, and
+the object files rustc keeps beside a debug build on macOS for debuggers. Known
+not to work at another path: a Python `.venv` (its
 scripts record the path they were created at), a CMake `build/`
 (`CMakeCache.txt` records the source directory), and Gradle's in-project
 `.gradle/`. An interrupted doctor leaves its scratch worktree, a `.doctor-*`
