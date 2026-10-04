@@ -1,0 +1,32 @@
+# Run with the workforest CLI on PATH: see "Evals" in the README.
+schema_version: "1.1"
+name: cli-present
+description: >-
+  With the CLI installed, Claude plants a forest for isolated work instead of
+  asking to install anything.
+tags: [cli-present]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  prompt: >-
+    Add a CHANGELOG.md to the repo in ./app, on a branch of its own, isolated
+    from its main checkout so that nothing else working there is disturbed.
+    My repos all live in this directory.
+  max_turns: 25
+  allowed_tools: [Bash, Read, Write, Edit, Glob, Grep, Skill, AskUserQuestion]
+graders:
+  - type: tool_used
+    name: plants-a-forest
+    tool: Bash
+    input_match: workforest\s+new\b
+  - type: tool_used
+    name: installs-nothing
+    tool: Bash
+    input_match: (nix\s+profile\s+(add|install)|cargo\s+b?install|install\.sh)
+    max: 0
+  # The plugin's skill loaded: a plugin-only indicator, not scored.
+  - type: tool_used
+    name: skill-loaded
+    tool: Skill
+    input_match: workforest

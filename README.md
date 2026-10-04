@@ -402,6 +402,25 @@ When CI passes on a commit pushed to `main`, the release workflow moves the
 command-line interface changes: the first commit to pass CI with a new version
 is tagged `v<version>` and gets a GitHub release.
 
+## Evals
+
+`plugin/evals/` is the plugin's eval suite for `claude plugin eval`. With the
+CLI missing (`missing-cli`), Claude must say so and ask how to install it,
+offering only the ways this machine has, and install or start nothing before
+an answer; with it installed (`cli-present`), Claude must plant a forest.
+Each case also runs without the plugin, as a baseline. Every run is a real
+model call, so the suite runs before releases rather than on every push: by
+hand with the Eval workflow, which needs an `ANTHROPIC_API_KEY` secret, or
+locally, where the Bash sandbox needs bubblewrap and socat on Linux:
+
+```sh
+flags='--scaffold --trust-plugin --allow-tools Bash Write Edit --model claude-sonnet-5-5 --max-cost-usd 5'
+PATH=<your PATH without workforest> claude plugin eval plugin --tag missing-cli $flags
+claude plugin eval plugin --tag cli-present $flags
+```
+
+`--max-cost-usd 0` checks the cases load without running any.
+
 ## License
 
 MIT
