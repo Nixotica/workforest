@@ -92,6 +92,7 @@ forest you're standing in.
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
+| `workforest config` | each setting, its value, and where it comes from |
 | `workforest cache <sub>` | build caches: `status`, `graft`, `drop`, `paths`, `doctor` |
 
 Aliases: `add`=`plant`, `remove`=`cut`, `rm`/`delete`=`burn`,
@@ -129,9 +130,12 @@ where repos live, so a bare name like `api` is rejected. In commands you run,
 pass absolute paths. When the user names a repo without saying where it is,
 find it or ask; don't guess.
 
-Environment: `WORKFOREST_ROOT` (default `~/.workforest`). Where this skill says
-`~/.workforest`, read that value if it is set. `WORKFOREST_CACHE_LINK_MIN`
-(default `65536`) sets the size from which grafted cache files are hardlinked.
+Settings: the forest root (default `~/.workforest`) and `cache.link_min`
+(default `65536`), the size from which grafted cache files are hardlinked. Each
+comes from its environment variable (`WORKFOREST_ROOT`,
+`WORKFOREST_CACHE_LINK_MIN`), else `~/.config/workforest/config.toml`, else its
+default. Where this skill says `~/.workforest`, it means the forest root:
+`workforest config` shows where it is.
 
 ## Typical flow
 

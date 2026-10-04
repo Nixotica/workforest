@@ -9,6 +9,7 @@ use std::process::{Command, Output, Stdio};
 use tempfile::TempDir;
 
 mod cache;
+mod config;
 mod fire;
 
 /// A throwaway home holding a forest root, a repos root, and the remotes those

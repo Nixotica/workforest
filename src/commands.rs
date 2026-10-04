@@ -11,7 +11,7 @@ use crate::cli::{
     CachePathsArgs, Caching, Cli, Command, CutArgs, FireArgs, ForestArg, LsArgs, NewArgs,
     PlantArgs, Removal,
 };
-use crate::config::{self, Config};
+use crate::config::Config;
 use crate::error::{Context, Result, bail};
 use crate::fire;
 use crate::forest::{Forest, Tree, cwd_is_within, dir_name};
@@ -31,16 +31,17 @@ pub fn run(cli: Cli) -> Result<()> {
         return Ok(());
     };
     match command {
-        Command::New(args) => new(&Config::from_env()?, args)?,
-        Command::Plant(args) => plant(&Config::from_env()?, args)?,
-        Command::Cut(args) => cut(&Config::from_env()?, args)?,
-        Command::Burn(args) => burn(&Config::from_env()?, args)?,
-        Command::Fire(args) => fire(&Config::from_env()?, args)?,
-        Command::Ls(args) => ls(&Config::from_env()?, args)?,
-        Command::Status(args) => status(&Config::from_env()?, args)?,
-        Command::Path(args) => path(&Config::from_env()?, args)?,
+        Command::New(args) => new(&Config::load()?, args)?,
+        Command::Plant(args) => plant(&Config::load()?, args)?,
+        Command::Cut(args) => cut(&Config::load()?, args)?,
+        Command::Burn(args) => burn(&Config::load()?, args)?,
+        Command::Fire(args) => fire(&Config::load()?, args)?,
+        Command::Ls(args) => ls(&Config::load()?, args)?,
+        Command::Status(args) => status(&Config::load()?, args)?,
+        Command::Path(args) => path(&Config::load()?, args)?,
+        Command::Config => show_config(&Config::load()?),
         Command::Cache(args) => {
-            let config = Config::from_env()?;
+            let config = Config::load()?;
             match args.command {
                 CacheCommand::Status(args) => cache_status(&config, args)?,
                 CacheCommand::Graft(args) => cache_graft(&config, args)?,
@@ -55,7 +56,7 @@ pub fn run(cli: Cli) -> Result<()> {
 
 fn new(config: &Config, args: NewArgs) -> Result<()> {
     let sources = main_worktrees(&args.repos)?;
-    let graft = grafting(&args.caching)?;
+    let graft = grafting(config, &args.caching)?;
     let forest = Forest::create(config, &args.forest)?;
     println!("new forest {} at {}", forest.name, forest.dir.display());
     if sources.is_empty() {
@@ -67,17 +68,17 @@ fn new(config: &Config, args: NewArgs) -> Result<()> {
 fn plant(config: &Config, args: PlantArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
     let sources = main_worktrees(&args.repos)?;
-    let graft = grafting(&args.caching)?;
+    let graft = grafting(config, &args.caching)?;
     plant_sources(&forest, sources, args.branching, graft)
 }
 
 /// The size from which grafted cache files are hardlinked, or `None` if
 /// `--no-cache` says not to graft.
-fn grafting(caching: &Caching) -> Result<Option<u64>> {
+fn grafting(config: &Config, caching: &Caching) -> Result<Option<u64>> {
     if caching.no_cache {
         return Ok(None);
     }
-    config::link_min().map(Some)
+    Ok(Some(config.link_min()?.value))
 }
 
 /// The main worktree of each repo argument, all checked before anything changes.
@@ -451,6 +452,21 @@ fn fire(config: &Config, args: FireArgs) -> Result<()> {
     Ok(())
 }
 
+fn show_config(config: &Config) {
+    let (path, exists) = config.file();
+    let found = if exists { "" } else { " (not found)" };
+    println!("{}{found}", path.display());
+    for shown in config.shown() {
+        let value = shown
+            .value
+            .unwrap_or_else(|problem| format!("unusable: {problem}"));
+        println!("  {:<16} {value:<32} {}", shown.name, shown.source);
+    }
+    for name in config.unknown_settings() {
+        eprintln!("workforest: {}: unknown setting {name}", path.display());
+    }
+}
+
 fn path(config: &Config, args: ForestArg) -> Result<()> {
     let forest = Forest::resolve(config, args.forest.as_deref(), NAME_AS_ARGUMENT)?;
     println!("{}", forest.dir.display());
@@ -482,7 +498,7 @@ fn cache_status(config: &Config, args: ForestArg) -> Result<()> {
 
 fn cache_graft(config: &Config, args: CacheGraftArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
-    let link_min = config::link_min()?;
+    let link_min = config.link_min()?.value;
     for tree in selected_trees(&forest, &args.trees)? {
         let dir = forest.tree_dir(&tree.repo);
         if !dir.is_dir() {

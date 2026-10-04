@@ -94,6 +94,7 @@ For other agents, put the skill wherever they read skills from.
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
+| `workforest config` | each setting, its value, and where it comes from |
 | `workforest cache status [forest]` | per tree, how much of each build cache is still hardlinked to the main checkout |
 | `workforest cache graft [tree...]` | graft build caches into trees already planted (`--force` replaces them) |
 | `workforest cache drop [tree...]` | delete trees' grafted build caches |
@@ -135,8 +136,8 @@ refuse, and has no `--force`.
 Repos are given as paths, absolute or relative to the current directory:
 `wf new fix-login .` starts a forest for the repo you're in. workforest assumes
 nothing about where your repos live, so a bare name like `api` is rejected;
-#20 tracks naming repos after a one-time setup. Forests live under
-`$WORKFOREST_ROOT` (default `~/.workforest`).
+#20 tracks naming repos after a one-time setup. Forests live under the forest
+root, `~/.workforest` unless [configured](#configuration) otherwise.
 
 ## Build caches
 
@@ -231,10 +232,31 @@ scripts record the path they were created at), a CMake `build/`
 `.gradle/`. An interrupted doctor leaves its scratch worktree, a `.doctor-*`
 directory under the forest root, until the next doctor of that repo removes it.
 
-`--no-cache` on `new` and `plant` skips the graft, and
-`$WORKFOREST_CACHE_LINK_MIN` (default `65536`) sets the size from which files
-are hardlinked. On btrfs and XFS a copy shares its data until written, so it
+`--no-cache` on `new` and `plant` skips the graft, and `cache.link_min`
+(default `65536`, see [Configuration](#configuration)) sets the size from which
+files are hardlinked. On btrfs and XFS a copy shares its data until written, so it
 costs little disk either.
+
+## Configuration
+
+Settings live in `$XDG_CONFIG_HOME/workforest/config.toml`, which is
+`~/.config/workforest/config.toml` unless `XDG_CONFIG_HOME` is set, on macOS
+too. The file is optional, and every setting in it is too:
+
+```toml
+forest_root = "~/.workforest"   # where forests live
+
+[cache]
+link_min = 65536                # bytes from which grafted cache files are hardlinked
+```
+
+An environment variable overrides each setting: `WORKFOREST_ROOT` and
+`WORKFOREST_CACHE_LINK_MIN`. So a setting comes from its environment variable,
+else the config file, else its default. Paths in the file are absolute or start
+with `~/`. `workforest config` prints each setting's value and where it came
+from, and warns about settings it doesn't know, such as a misspelt one. A file
+that isn't valid TOML stops every command; a bad `cache.link_min` stops only
+the commands that graft.
 
 ## Development
 
