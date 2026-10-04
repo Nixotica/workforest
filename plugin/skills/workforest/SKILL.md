@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.5.0 or later.
+This skill drives the `workforest` command-line tool, version 0.9.0 or later.
 Check that it is installed:
 
 ```sh
@@ -47,7 +47,14 @@ machine:
 
 If none of these fit, point the user at
 <https://github.com/Nixotica/workforest#install>. After installing, run
-`workforest --version` again, then carry on with the task.
+`workforest --version` again.
+
+Then, once per machine, make sure workforest knows where the user's repos live:
+`workforest config` shows `repos` as "not set" until it does. Ask the user where
+their repos live, suggesting directories you can see that hold several git
+repos, and run `workforest setup --repos <dir>` with their answer (several
+directories are fine). Never run `workforest setup` without `--repos`: it asks
+on the terminal. Then carry on with the task.
 
 If a command or flag below is reported as unknown, the installed tool is older
 than this skill. Offer to update it the same way it was installed: for a Nix
@@ -92,6 +99,7 @@ forest you're standing in.
 | `workforest ls [forest]` | list forests, or the trees in one |
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
+| `workforest setup --repos <dir>...` | say where repos live, so that they can be named |
 | `workforest config` | each setting, its value, and where it comes from |
 | `workforest cache <sub>` | build caches: `status`, `graft`, `drop`, `paths`, `doctor` |
 
@@ -124,11 +132,13 @@ Options:
 - `--no-fetch` — on `fire`, judge the bases as last fetched.
 - `--no-cache` — on `new`/`plant`, don't graft the repos' build caches.
 
-Repos are always given as paths: absolute, or relative to the current
-directory, where `.` is the repo you're in. workforest assumes nothing about
-where repos live, so a bare name like `api` is rejected. In commands you run,
-pass absolute paths. When the user names a repo without saying where it is,
-find it or ask; don't guess.
+Repos are given as paths, absolute or relative to the current directory, where
+`.` is the repo you're in, or, once `workforest setup` has said where repos
+live, as bare names like `api`. A name is looked for in each repos directory and
+one level down in directories that aren't repos themselves (so `nodal-game`
+finds `~/repos/nodal/nodal-game`); a name found more than once is an error that
+asks for a path. In commands you run, pass absolute paths. When the user names a
+repo without saying where it is, find it or ask; don't guess.
 
 Settings: the forest root (default `~/.workforest`) and `cache.link_min`
 (default `65536`), the size from which grafted cache files are hardlinked. Each

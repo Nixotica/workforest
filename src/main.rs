@@ -9,6 +9,7 @@ mod error;
 mod fire;
 mod forest;
 mod git;
+mod repos;
 
 use std::process::ExitCode;
 

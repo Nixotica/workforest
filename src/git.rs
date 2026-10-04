@@ -75,14 +75,14 @@ where
     bail!("`git {}` failed in {}", shown.join(" "), dir.display())
 }
 
-/// The main worktree of the repo at `arg`, a path that is absolute or relative
-/// to the current directory. A bare name is rejected rather than guessed at:
-/// nothing says which directory it would name a repo in.
-pub fn main_worktree(arg: &str) -> Result<PathBuf> {
-    if !arg.contains('/') && !arg.starts_with('.') {
-        bail!("{arg} is a name, not a path: pass the repo's path, such as ./{arg}");
-    }
-    let path = Path::new(arg);
+/// Whether `dir` is the top of a git checkout: it holds a `.git` directory, or
+/// a `.git` file, as a linked worktree does.
+pub fn is_checkout(dir: &Path) -> bool {
+    dir.join(".git").symlink_metadata().is_ok()
+}
+
+/// The main worktree of the repo at `path`.
+pub fn main_worktree(path: &Path) -> Result<PathBuf> {
     if !path.is_dir() {
         bail!("no such repo: {}", path.display());
     }
