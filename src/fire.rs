@@ -145,17 +145,17 @@ pub fn judge(forest: &Forest, tree: &Tree) -> Verdict {
             tree.branch
         ));
     }
-    if !git::resolves(&dir, &tree.base) {
+    let verdict = if let Some(target) = landed_on(&dir, tree, Some(&branch)) {
+        Verdict::Dead(format!("landed on {target}"))
+    } else if !git::resolves(&dir, &tree.base) {
         return Verdict::Unknown(format!("its base {} no longer exists", tree.base));
-    }
-    let base = &git::landing_base(&tree.source, &tree.base, &branch);
-    let verdict = match git::count(&dir, &format!("{base}..HEAD")) {
-        None => return Verdict::Unknown(format!("it can't be compared with {base}")),
-        Some(_) if git::work_landed(&dir, base, "HEAD", Some(&branch)) => {
-            Verdict::Dead(format!("landed on {base}"))
+    } else {
+        let base = git::landing_base(&tree.source, &tree.base, &branch);
+        match git::count(&dir, &format!("{base}..HEAD")) {
+            None => return Verdict::Unknown(format!("it can't be compared with {base}")),
+            Some(0) => Verdict::Live("nothing committed yet".to_owned()),
+            Some(ahead) => Verdict::Live(format!("{ahead} commit(s) not on {base}")),
         }
-        Some(0) => Verdict::Live("nothing committed yet".to_owned()),
-        Some(ahead) => Verdict::Live(format!("{ahead} commit(s) not on {base}")),
     };
     // Landed work passes burn's checks by definition; this keeps it so.
     if verdict.is_dead()
@@ -164,6 +164,21 @@ pub fn judge(forest: &Forest, tree: &Tree) -> Verdict {
         return Verdict::Unknown(format!("burn would refuse it: {risk}"));
     }
     verdict
+}
+
+/// Where `tree`, checked out at `dir` on `branch`, has landed its work, if it
+/// has: the base it lands on (see [`git::landing_base`]), or the default branch
+/// standing in for a spent base (see [`git::base_stand_in`]).
+pub fn landed_on(dir: &Path, tree: &Tree, branch: Option<&str>) -> Option<String> {
+    let base = branch.map_or_else(
+        || tree.base.clone(),
+        |branch| git::landing_base(&tree.source, &tree.base, branch),
+    );
+    let stand_in = git::base_stand_in(dir, &base);
+    [Some(base), stand_in]
+        .into_iter()
+        .flatten()
+        .find(|target| git::work_landed(dir, target, "HEAD", branch))
 }
 
 /// Whether the worktree `record` in a repo points back at the worktree at `dir`.
@@ -181,21 +196,24 @@ fn points_at(record: &Path, dir: &Path) -> bool {
 }
 
 /// Whether deleting `tree`'s branch would lose no commits: everything on it is
-/// on its base, or there is no such branch.
+/// on its base, or on the default branch standing in for a base that is gone,
+/// or there is no such branch.
 pub fn branch_spent(tree: &Tree) -> bool {
     if !git::branch_exists(&tree.source, &tree.branch) {
         return true;
     }
     let tip = format!("refs/heads/{}", tree.branch);
-    match git::count(&tree.source, &format!("{}..{tip}", tree.base)) {
+    let on = |target: &str| match git::count(&tree.source, &format!("{target}..{tip}")) {
         Some(0) => true,
-        Some(_) => git::landed(&tree.source, &tree.base, &tip),
+        Some(_) => git::landed(&tree.source, target, &tip),
         None => false,
-    }
+    };
+    on(&tree.base)
+        || git::base_stand_in(&tree.source, &tree.base).is_some_and(|stand_in| on(&stand_in))
 }
 
 /// Fetch the remotes that the trees' bases are on, once per repo, several repos
-/// at a time. A repo that can't be fetched is reported and judged as last
+/// at a time, pruning deleted branches so that a base that is gone looks gone. A repo that can't be fetched is reported and judged as last
 /// fetched; a forest whose manifest can't be read is reported when it is judged.
 pub fn fetch_bases(forests: &[Forest]) {
     let mut bases: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();

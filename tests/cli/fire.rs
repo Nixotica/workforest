@@ -2,6 +2,7 @@
 //! tree that could pass for dead is left standing.
 
 use std::fs;
+use std::path::PathBuf;
 
 use super::{Merge, Sandbox, path};
 
@@ -551,4 +552,115 @@ fn fire_leaves_a_tree_whose_record_another_worktree_took_over() {
     assert!(orphan.is_dir());
     assert!(out.contains("burned forest taker"), "{out}");
     assert_eq!(sb.git(&api, &["worktree", "list"]).lines().count(), 1);
+}
+
+/// A forest `upper` stacked on a pushed branch `lower`: planted off
+/// `origin/lower`, with a commit of its own pushed as `upper`. `lower`'s own
+/// forest is burned, leaving its branch on the remote.
+fn stack(sb: &Sandbox) -> PathBuf {
+    sb.pull_request("lower", "api");
+    sb.ok(&sb.root, &["burn", "lower"]);
+    sb.ok(
+        &sb.root,
+        &["new", "upper", "repos/api", "-B", "origin/lower"],
+    );
+    let upper = sb.forest("upper").join("api");
+    sb.commit(&upper, "upper.txt");
+    sb.git(&upper, &["push", "--quiet", "-u", "origin", "HEAD"]);
+    upper
+}
+
+#[test]
+fn stacked_work_lands_on_the_default_branch_once_its_base_branch_is_gone() {
+    for burn in [false, true] {
+        let sb = Sandbox::new();
+        let api = sb.repo("api");
+        stack(&sb);
+        // lower merges and is deleted; the forge retargets upper to main.
+        sb.merge_on_remote("api", "lower", Merge::Squash);
+        sb.merge_on_remote("api", "upper", Merge::Squash);
+
+        // fire's fetch prunes origin/lower, and origin/upper with it.
+        let plan = sb.ok(&sb.root, &["fire"]);
+        assert!(plan.contains("upper  burn\n"), "{plan}");
+        assert!(plan.contains("landed on origin/main\n"), "{plan}");
+        let status = sb.ok(&sb.root, &["status", "upper"]);
+        assert!(
+            status.contains("landed +?/-? vs origin/lower\n"),
+            "{status}"
+        );
+
+        // Only the stand-in shows the work is safe, now that the base and the
+        // upstream are both gone; burn and branch deletion see it too.
+        let out = if burn {
+            sb.ok(&sb.root, &["burn", "upper"])
+        } else {
+            sb.ok(&sb.root, &["fire", "--yes", "--delete-branches"])
+        };
+        assert!(out.contains("burned forest upper"), "{out}");
+        let branches = sb.git(&api, &["branch", "--list", "upper"]);
+        assert_eq!(branches.is_empty(), !burn, "{branches}");
+    }
+}
+
+#[test]
+fn stacked_work_lands_on_its_base_branch_while_that_lives() {
+    let sb = Sandbox::new();
+    sb.repo("api");
+    stack(&sb);
+    let forge = sb.forge("api");
+    sb.git(
+        &forge,
+        &["checkout", "--quiet", "-B", "lower", "origin/lower"],
+    );
+    sb.git(&forge, &["merge", "--quiet", "--squash", "origin/upper"]);
+    sb.git(&forge, &["commit", "--quiet", "--message", "upper"]);
+    sb.git(&forge, &["push", "--quiet", "origin", "lower", ":upper"]);
+
+    let out = sb.ok(&sb.root, &["fire"]);
+
+    assert!(out.contains("upper  burn\n"), "{out}");
+    assert!(out.contains("landed on origin/lower\n"), "{out}");
+}
+
+#[test]
+fn a_backport_lands_only_on_the_release_branch_it_was_based_on() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    // A release branch cut from main, which then moves on with a fix.
+    sb.git(&api, &["push", "--quiet", "origin", "main:release"]);
+    let forge = sb.forge("api");
+    sb.commit(&forge, "fix.txt");
+    sb.git(&forge, &["push", "--quiet", "origin", "main"]);
+    sb.git(&api, &["fetch", "--quiet"]);
+    // The fix, backported to the release branch and under review.
+    sb.ok(
+        &sb.root,
+        &["new", "backport", "repos/api", "-B", "origin/release"],
+    );
+    let tree = sb.forest("backport").join("api");
+    sb.commit(&tree, "fix.txt");
+    sb.git(&tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
+
+    // main has the same change, but the release branch doesn't yet.
+    let open = sb.ok(&sb.root, &["fire"]);
+    assert!(open.contains("1 other forest(s) in flight"), "{open}");
+    let status = sb.ok(&sb.root, &["status", "backport"]);
+    assert!(
+        status.contains("clean  +1/-0 vs origin/release, pushed\n"),
+        "{status}"
+    );
+
+    sb.git(&forge, &["fetch", "--quiet", "origin"]);
+    sb.git(
+        &forge,
+        &["checkout", "--quiet", "-B", "release", "origin/release"],
+    );
+    sb.git(&forge, &["merge", "--quiet", "--squash", "origin/backport"]);
+    sb.git(&forge, &["commit", "--quiet", "--message", "backport"]);
+    sb.git(&forge, &["push", "--quiet", "origin", "release"]);
+
+    let merged = sb.ok(&sb.root, &["fire"]);
+    assert!(merged.contains("backport  burn\n"), "{merged}");
+    assert!(merged.contains("landed on origin/release\n"), "{merged}");
 }

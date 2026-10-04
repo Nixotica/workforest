@@ -139,7 +139,7 @@ Environment: `WORKFOREST_ROOT` (default `~/.workforest`). Where this skill says
 workforest new fix-login ~/code/api           # single-repo forest — a normal case
 cd "$(workforest path fix-login)/api"
 # ...edit, commit, push, merge, then...
-git fetch                                     # burn checks the base as last fetched
+git fetch --prune                             # burn checks the base as last fetched
 workforest burn fix-login
 ```
 
@@ -226,14 +226,17 @@ being a picture of what is really in flight.
 `burn` refuses to remove a tree with uncommitted changes, or with commits that
 are neither pushed nor landed on its base. Work has landed once everything its
 branch changed is on the base, so a regular, squash or rebase merge all count,
-whether or not the merged branch was deleted. `status` shows such a tree as
-`landed`.
+whether or not the merged branch was deleted. Once the base branch itself is
+gone, as a stacked branch's base is after it merges, the repo's default branch
+stands in for it; a base that lives on, such as a release branch, never has a
+stand-in. `status` shows such a tree as `landed`.
 
 `burn` checks the base as this machine last fetched it, so fetch each tree's
-repo after merging, then burn:
+repo after merging, pruning deleted branches so that a deleted base looks
+gone, then burn:
 
 ```sh
-for t in "$(workforest path <forest>)"/*/; do git -C "$t" fetch --quiet; done
+for t in "$(workforest path <forest>)"/*/; do git -C "$t" fetch --quiet --prune; done
 workforest burn <forest> --delete-branches
 ```
 
@@ -251,13 +254,13 @@ directory that no longer exists; workforest then prints where to `cd`. Prefer
 ### Every forest at once: `fire`
 
 `workforest fire` finds every forest whose work is done. It fetches the remotes
-the trees' bases are on, then judges each tree:
+the trees' bases are on, pruning deleted branches, then judges each tree:
 
 | verdict | when |
 | --- | --- |
-| `dead` | its branch has commits of its own and they have all landed on its base, or its directory is gone. A base that is the branch's own remote branch only shows it was pushed, so the repo's default branch is used instead |
+| `dead` | its branch has commits of its own and they have all landed on its base, or its directory is gone. The repo's default branch stands in for a base that is gone, and for a base that is the branch's own remote branch, which only shows it was pushed |
 | `live` | uncommitted changes, commits not on its base (an open pull request), or nothing committed yet |
-| `?` | git can't judge it, or it is locked: detached HEAD, another branch checked out, its base or its repo gone, its worktree record missing or taken by another worktree |
+| `?` | git can't judge it, or it is locked: detached HEAD, another branch checked out, its repo gone, its base gone without its work on the default branch, its worktree record missing or taken by another worktree |
 
 A forest burns only when every tree in it is dead; `--scorch` also cuts dead
 trees out of forests that are still live. Without `--yes` it is a dry run that

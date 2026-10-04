@@ -98,13 +98,7 @@ pub fn main_worktree(arg: &str) -> Result<PathBuf> {
 /// The ref a new branch starts from when no base is given: `origin/HEAD`, else
 /// a local `main` or `master`, else whatever the repo has checked out.
 pub fn default_base(repo: &Path) -> String {
-    let origin_head = [
-        "symbolic-ref",
-        "--quiet",
-        "--short",
-        "refs/remotes/origin/HEAD",
-    ];
-    if let Some(base) = output(repo, origin_head) {
+    if let Some(base) = default_branch(repo) {
         return base;
     }
     for candidate in ["main", "master"] {
@@ -113,6 +107,31 @@ pub fn default_base(repo: &Path) -> String {
         }
     }
     output(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|| "HEAD".to_owned())
+}
+
+/// The branch `origin/HEAD` points at: where a repo's finished work ends up.
+/// Unlike [`default_base`], it never falls back to a local branch.
+pub fn default_branch(dir: &Path) -> Option<String> {
+    let origin_head = [
+        "symbolic-ref",
+        "--quiet",
+        "--short",
+        "refs/remotes/origin/HEAD",
+    ];
+    output(dir, origin_head)
+}
+
+/// The default branch, when it stands in for `base` as where work on `base`
+/// lands: once `base` is gone. A stacked branch's base is deleted when it
+/// merges, and the forge retargets the stacked pull request to the default
+/// branch. A base that lives on, such as a release branch, has no stand-in,
+/// even when the default branch has the same change, as it does for a
+/// backport.
+pub fn base_stand_in(dir: &Path, base: &str) -> Option<String> {
+    if resolves(dir, base) {
+        return None;
+    }
+    default_branch(dir).filter(|default| default != base)
 }
 
 /// Whether `rev` names a commit in the repo at `dir`.
@@ -244,7 +263,8 @@ pub fn has_upstream(dir: &Path) -> bool {
 
 /// Why deleting the tree at `dir` would lose work, if it would: uncommitted
 /// changes, or commits that its upstream (else `base`) lacks and that have not
-/// [`landed`] on `base`. Anything git cannot answer counts as a risk.
+/// [`landed`] on `base`, or on the default branch standing in for it (see
+/// [`base_stand_in`]). Anything git cannot answer counts as a risk.
 pub fn unlanded_work(dir: &Path, base: &str) -> Option<String> {
     if !dir.is_dir() {
         return None;
@@ -267,7 +287,9 @@ pub fn unlanded_work(dir: &Path, base: &str) -> Option<String> {
             None => format!("commits that could not be compared with {base}"),
         }
     };
-    (!landed(dir, base, "HEAD")).then_some(risk)
+    let landed_anywhere = landed(dir, base, "HEAD")
+        || base_stand_in(dir, base).is_some_and(|stand_in| landed(dir, &stand_in, "HEAD"));
+    (!landed_anywhere).then_some(risk)
 }
 
 /// Whether `tip`, such as `HEAD`, holds work of its own that is all on `base`
@@ -345,11 +367,12 @@ pub fn remote_of(repo: &Path, base: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Fetch `remote` into `repo`, letting git's errors through to stderr, and
-/// report whether that worked. Git never stops to ask for credentials.
+/// Fetch `remote` into `repo`, pruning the branches deleted from it, letting
+/// git's errors through to stderr, and report whether that worked. Git never
+/// stops to ask for credentials.
 pub fn fetch(repo: &Path, remote: &str) -> bool {
     git(repo)
-        .args(["fetch", "--quiet", remote])
+        .args(["fetch", "--quiet", "--prune", remote])
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(Stdio::null())
         .status()

@@ -109,16 +109,21 @@ off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `cut`
 and `burn` refuse to delete uncommitted changes, or commits that are neither
 pushed nor landed on the base, unless you pass `--force`. Work has landed once
 everything its branch changed is on the base, so a regular, squash or rebase
-merge all count, even after the merged branch is deleted. They check the base
-as you last fetched it: fetch after merging, then burn. Run
-`workforest help <command>` for the details.
+merge all count, even after the merged branch is deleted. Once the base branch
+itself is gone, as a stacked branch's base is after it merges and the stacked
+pull request is retargeted, the repo's default branch (`origin/HEAD`) stands in
+for it. A base that lives on, such as a release branch, never has a stand-in.
+They check the base as you last fetched it: fetch with `--prune` after merging,
+then burn. Run `workforest help <command>` for the details.
 
 Forests pile up, and `workforest fire` clears them all at once. It fetches the
-remotes the trees' bases are on, then calls a tree dead when `burn` would accept
-it and its branch has commits of its own that have all landed on its base, or
-when its directory is gone. A tree with uncommitted changes, with commits not
-on its base, or with nothing committed yet is live, and one that git can't
-judge, such as one whose base branch was deleted, is left alone. A forest burns
+remotes the trees' bases are on, pruning deleted branches, then calls a tree
+dead when `burn` would accept it and its branch has commits of its own that
+have all landed on its base, or on the default branch standing in for a base
+that is gone, or when its directory is gone. A tree with uncommitted changes,
+with commits not on its base, or with nothing committed yet is live, and one
+that git can't judge, such as one whose base was deleted before its work
+landed anywhere, is left alone. A forest burns
 when every tree in it is dead: `fire` lists each such forest and why, and
 `fire --yes` burns them. `--scorch` also cuts dead trees out of forests that are
 still live, and `--delete-branches` deletes the dead trees' branches, keeping
