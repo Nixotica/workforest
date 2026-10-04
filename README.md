@@ -50,6 +50,26 @@ or as a flake input, `workforest.url = "github:Nixotica/workforest/release";`,
 adding `workforest.packages.${system}.default` to your packages. Update with
 `nix profile upgrade` or `nix flake update workforest`.
 
+With Home Manager, the flake's module installs the package and can write the
+config file, load `wfcd`, link the agent skill and burn landed forests on a
+timer:
+
+```nix
+# flake inputs: workforest.url = "github:Nixotica/workforest/release";
+imports = [ inputs.workforest.homeManagerModules.default ];
+
+programs.workforest = {
+  enable = true;
+  settings.repos = "~/code";        # config.toml, instead of `workforest setup`
+  # installClaudeSkill = true;      # link the skill, if not using the plugin
+  # fire.enable = true;             # `workforest fire --yes` daily (Linux, systemd)
+};
+```
+
+`wfcd` is loaded in each shell Home Manager manages (`enableBashIntegration`
+and its zsh and fish twins, on by default), and `fire.frequency` and
+`fire.flags` adjust the timer.
+
 With Cargo:
 
 ```sh
