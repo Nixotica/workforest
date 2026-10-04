@@ -491,6 +491,13 @@ fn path_finds_the_forest_from_nested_and_symlinked_directories() {
         outside.contains("not inside a forest; pass the forest's name"),
         "{outside}"
     );
+
+    // And the other way round, as /tmp is /private/tmp on macOS: the shell got
+    // into the forest through a symlink to it.
+    let alias = sb.root.join("alias");
+    symlink(sb.forest("deep"), &alias).unwrap();
+    assert_eq!(sb.ok(&alias.join("api"), &["path"]), expected);
+    assert!(sb.ok(&alias, &["status"]).starts_with("deep  "));
 }
 
 #[test]

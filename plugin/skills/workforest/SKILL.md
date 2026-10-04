@@ -44,7 +44,7 @@ machine:
 | packages managed by Home Manager or NixOS | install nothing yourself; show the flake input `workforest.url = "github:Nixotica/workforest/release";` and adding `workforest.packages.<system>.default` to their packages |
 | `nix` | `nix profile add github:Nixotica/workforest/release` (older Nix calls it `nix profile install`) |
 | `cargo` | `cargo install --locked --git https://github.com/Nixotica/workforest --branch release` |
-| Linux (x86_64 or aarch64), with neither | `curl -fsSL https://raw.githubusercontent.com/Nixotica/workforest/release/install.sh \| sh`, which installs into `~/.local/bin` |
+| Linux (x86_64 or aarch64) or an Apple Silicon Mac, with neither | `curl -fsSL https://raw.githubusercontent.com/Nixotica/workforest/release/install.sh \| sh`, which installs into `~/.local/bin` |
 
 If none of these fit, point the user at
 <https://github.com/Nixotica/workforest#install>. After installing, run

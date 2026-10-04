@@ -69,11 +69,31 @@
         };
       };
 
-      # The musl target that a Linux system's static build is for.
-      muslTargets = {
+      # The target each release binary is built for: static musl on Linux,
+      # and the native target on Apple Silicon.
+      releaseTargets = {
         x86_64-linux = "x86_64-unknown-linux-musl";
         aarch64-linux = "aarch64-unknown-linux-musl";
+        aarch64-darwin = "aarch64-apple-darwin";
       };
+
+      # The macOS build that releases ship, which must run on a Mac without
+      # Nix: it fails if the binary links anything outside the system's
+      # libraries, as Nix-built Darwin binaries can, such as libiconv from
+      # /nix/store.
+      buildSystemLinked =
+        pkgs:
+        (build pkgs).workforest.overrideAttrs (old: {
+          doInstallCheck = true;
+          nativeInstallCheckInputs = (old.nativeInstallCheckInputs or [ ]) ++ [ pkgs.cctools ];
+          installCheckPhase = ''
+            otool -L "$out/bin/workforest"
+            if otool -L "$out/bin/workforest" | tail -n +2 | grep -Ev '^[[:space:]]*(/usr/lib/|/System/)'; then
+              echo "links libraries outside the system's" >&2
+              exit 1
+            fi
+          '';
+        });
 
       # A statically linked build for `target`, a musl target, which runs on
       # any Linux whatever its libc: what releases ship. It fails unless the
@@ -185,15 +205,16 @@
         let
           inherit (build pkgs) workforest;
           system = pkgs.stdenv.hostPlatform.system;
-          target = muslTargets.${system} or null;
+          target = releaseTargets.${system} or null;
         in
         {
           inherit workforest;
           default = workforest;
         }
         // lib.optionalAttrs (target != null) rec {
-          static = buildStatic pkgs target;
-          release-tarball = tarball pkgs static target;
+          release-binary =
+            if pkgs.stdenv.hostPlatform.isDarwin then buildSystemLinked pkgs else buildStatic pkgs target;
+          release-tarball = tarball pkgs release-binary target;
         }
       );
 
