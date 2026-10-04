@@ -319,15 +319,11 @@ fn status(config: &Config, args: ForestArg) -> Result<()> {
     Ok(())
 }
 
-/// Whether `tree`, checked out at `dir`, holds work of its own that is on the
-/// base it lands on by now.
+/// Whether `tree`, checked out at `dir`, holds work of its own that has landed
+/// by now, as `fire` judges it.
 fn head_landed(dir: &Path, tree: &Tree) -> bool {
     let branch = git::current_branch(dir);
-    let base = branch.as_deref().map_or_else(
-        || tree.base.clone(),
-        |branch| git::landing_base(&tree.source, &tree.base, branch),
-    );
-    git::work_landed(dir, &base, "HEAD", branch.as_deref())
+    fire::landed_on(dir, tree, branch.as_deref()).is_some()
 }
 
 /// Whether the tree at `dir`, `ahead` commits ahead of its base, has them all

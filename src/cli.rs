@@ -110,15 +110,18 @@ pub struct BurnArgs {
 const FIRE_AFTER_HELP: &str = "\
 A tree is dead when burn would accept it and its work has landed: its branch
 has commits of its own, and everything they changed is on its base, however
-they were merged. A tree whose directory is gone is dead too. A tree with
-uncommitted changes, with commits not on its base, or with nothing committed
-yet is live; one git can't judge is left alone.
+they were merged. Once a base branch is gone, as a stacked branch's base is
+after it merges, the repo's default branch stands in for it. A tree whose
+directory is gone is dead too. A tree with uncommitted changes, with commits
+not on its base, or with nothing committed yet is live; one git can't judge is
+left alone.
 
 A forest burns when every tree in it is dead. fire never removes anything burn
 would refuse, and has no --force.
 
-Before judging, fire fetches the remotes the trees' bases are on, so their
-merges are seen.";
+Before judging, fire fetches the remotes the trees' bases are on, pruning the
+branches deleted from them, so that merges are seen and deleted bases look
+gone.";
 
 #[derive(Args)]
 pub struct FireArgs {
