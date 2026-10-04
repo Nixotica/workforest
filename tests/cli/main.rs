@@ -12,6 +12,7 @@ mod cache;
 mod config;
 mod fire;
 mod json;
+mod shells;
 
 /// A throwaway home holding a forest root, a repos root, and the remotes those
 /// repos were cloned from.

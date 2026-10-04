@@ -95,6 +95,8 @@ For other agents, put the skill wherever they read skills from.
 | `workforest status [forest]` | per-tree branch, clean/dirty/landed, ahead/behind its base, pushed or not |
 | `workforest path [forest]` | print a forest's path |
 | `workforest setup [--repos <dir>...]` | say where your repos live, so that they can be named |
+| `workforest completions <shell>` | print the completion script for bash, zsh or fish |
+| `workforest shell-init <shell>` | print `wfcd`, a function that cds into a forest or one of its trees |
 | `workforest config` | each setting, its value, and where it comes from |
 | `workforest cache status [forest]` | per tree, how much of each build cache is still hardlinked to the main checkout |
 | `workforest cache graft [tree...]` | graft build caches into trees already planted (`--force` replaces them) |
@@ -149,6 +151,32 @@ directories that aren't repos themselves, so `nodal-game` finds
 `~/code/nodal/nodal-game`. A name found more than once is an error that asks
 for a path. Forests live under the forest root, `~/.workforest` unless
 [configured](#configuration) otherwise.
+
+## Shell integration
+
+Completion covers both `workforest` and `wf`: subcommands, flags, forest names,
+the trees of the forest you're in, and repos, as paths or by
+[name](#usage). It asks `workforest` for names as you type, so they're always
+current. The Nix package installs it for bash, zsh and fish. Otherwise, load it
+from your shell's startup file:
+
+```sh
+source <(workforest completions bash)       # ~/.bashrc
+source <(workforest completions zsh)        # ~/.zshrc, after compinit
+workforest completions fish | source        # ~/.config/fish/config.fish
+```
+
+`wfcd` cds into a forest, or into one of its trees, and completes both names.
+With no arguments it goes to the root of the forest you're in. It's a shell
+function, so load it at startup too:
+
+```sh
+eval "$(workforest shell-init bash)"        # or zsh
+workforest shell-init fish | source         # fish
+
+wfcd auth-migration        # the forest
+wfcd auth-migration api    # one of its trees
+```
 
 ## Build caches
 
