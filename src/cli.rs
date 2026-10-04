@@ -64,6 +64,8 @@ pub enum Command {
     /// Print a forest's path
     #[command(visible_alias = "dir")]
     Path(ForestArg),
+    /// Run a command in every tree of a forest: `workforest exec -- cargo test`
+    Exec(ExecArgs),
     /// Manage the build caches grafted into trees
     Cache(CacheArgs),
     /// Show each setting, its value, and where it comes from
@@ -161,6 +163,20 @@ pub struct FireArgs {
     /// has commits not on its base
     #[arg(long)]
     pub delete_branches: bool,
+}
+
+#[derive(Args)]
+pub struct ExecArgs {
+    #[command(flatten)]
+    pub target: Target,
+    /// Run in up to N trees at once, printing each tree's output as it
+    /// finishes [default N: one per CPU]
+    #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "0")]
+    pub parallel: Option<usize>,
+    /// The command and its arguments, after `--`. It runs as given, not
+    /// through a shell, with WORKFOREST_FOREST and WORKFOREST_TREE set
+    #[arg(last = true, required = true, value_name = "COMMAND")]
+    pub command: Vec<std::ffi::OsString>,
 }
 
 #[derive(Args)]

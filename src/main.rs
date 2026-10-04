@@ -7,6 +7,7 @@ mod commands;
 mod complete;
 mod config;
 mod error;
+mod exec;
 mod fire;
 mod forest;
 mod git;

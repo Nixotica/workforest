@@ -10,6 +10,7 @@ use tempfile::TempDir;
 
 mod cache;
 mod config;
+mod exec;
 mod fire;
 mod json;
 mod shells;

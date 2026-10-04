@@ -16,6 +16,7 @@ use crate::cli::{
 use crate::complete;
 use crate::config::{self, Config};
 use crate::error::{Context, Result, bail};
+use crate::exec;
 use crate::fire;
 use crate::forest::{Forest, Tree, cwd_is_within, dir_name};
 use crate::git;
@@ -43,6 +44,12 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ls(args) => ls(&Config::load()?, args)?,
         Command::Status(args) => status(&Config::load()?, args)?,
         Command::Path(args) => path(&Config::load()?, args)?,
+        Command::Exec(args) => {
+            let config = Config::load()?;
+            let forest = Forest::resolve(&config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
+            let at_once = args.parallel.map(|n| if n == 0 { exec::cpus() } else { n });
+            exec::exec(&forest, &args.command, at_once)?;
+        }
         Command::Config => show_config(&Config::load()?),
         Command::Setup(args) => setup(&Config::load()?, args)?,
         Command::Completions(args) => complete::print_registration(&args)?,
