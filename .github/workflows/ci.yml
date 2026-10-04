@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  # To replace older Nix store caches when main saves a new one.
+  actions: write
 
 jobs:
   nix:
@@ -26,6 +28,21 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
+      # The Nix store, kept in the Actions cache per platform and lockfiles:
+      # the toolchains and the crates' build, which change only when the
+      # lockfiles do, are restored instead of rebuilt. Only pushes to main
+      # save it, replacing that platform's older caches; pull requests read
+      # main's and write nothing.
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-${{ runner.arch }}-
+          save: ${{ github.event_name == 'push' }}
+          purge: ${{ github.event_name == 'push' }}
+          purge-prefixes: nix-${{ runner.os }}-${{ runner.arch }}-
+          purge-created: 0
+          purge-primary-key: never
 
       - name: Tests, clippy, rustfmt and the package build
         run: nix flake check --print-build-logs
