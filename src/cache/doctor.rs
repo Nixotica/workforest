@@ -18,7 +18,7 @@ use std::time::Instant;
 use super::glob::Glob;
 use super::walk::walk;
 use super::{Entry, Mode, clone, count, declared, ecosystem, human_bytes, warn};
-use crate::config::{self, Config};
+use crate::config::Config;
 use crate::error::{Context, Result, bail};
 use crate::forest::dir_name;
 use crate::git;
@@ -34,7 +34,7 @@ const SCAN_MAX: u64 = 1024 * 1024;
 /// Test the `clone` caches of the repo whose main worktree is at `source` by
 /// building with `cmd`, a shell command, in a throwaway worktree.
 pub fn doctor(config: &Config, source: &Path, cmd: Option<&str>) -> Result<()> {
-    let link_min = config::link_min()?;
+    let link_min = config.link_min()?.value;
     let repo = dir_name(source);
     let declared = declared(source);
     warn(&declared.warnings);

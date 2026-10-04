@@ -11,7 +11,8 @@ pub const VERSION: &str = match option_env!("WORKFOREST_VERSION") {
 
 const AFTER_HELP: &str = "\
 Repos are given as paths, absolute or relative to the current directory: `.` is
-the repo you're in. Forests live under $WORKFOREST_ROOT (default ~/.workforest).
+the repo you're in. Forests live under $WORKFOREST_ROOT, else forest_root in
+~/.config/workforest/config.toml, else ~/.workforest; see `workforest config`.
 
 Planting a tree also grafts the build caches its repo declares in
 .workforest-cache; see `workforest help cache`.
@@ -61,6 +62,8 @@ pub enum Command {
     Path(ForestArg),
     /// Manage the build caches grafted into trees
     Cache(CacheArgs),
+    /// Show each setting, its value, and where it comes from
+    Config,
 }
 
 #[derive(Args)]
@@ -208,7 +211,8 @@ whatever their size, comma-separated, or - for none. # starts a comment:
 workforest only replaces or deletes cache paths that git ignores. Before
 trusting a clone entry, test it with `workforest cache doctor`.
 
-Environment: WORKFOREST_CACHE_LINK_MIN (default 65536).";
+The size from which files are hardlinked is $WORKFOREST_CACHE_LINK_MIN, else
+cache.link_min in the config file, else 65536.";
 
 /// Build caches, grafted from each repo's main checkout so a new tree doesn't
 /// build from cold.
