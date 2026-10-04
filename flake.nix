@@ -10,6 +10,11 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Only for the check that evaluates the Home Manager module.
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -18,6 +23,7 @@
       nixpkgs,
       crane,
       rust-overlay,
+      home-manager,
     }:
     let
       inherit (nixpkgs) lib;
@@ -144,6 +150,58 @@
           tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner -czf "$out" ${name}
         '';
 
+      # The Home Manager module in a minimal configuration, with everything
+      # on: the files it writes must say what the options asked for.
+      homeManagerCheck =
+        pkgs:
+        let
+          inherit (pkgs.stdenv.hostPlatform) isDarwin isLinux;
+          home = home-manager.lib.homeManagerConfiguration {
+            inherit pkgs;
+            modules = [
+              self.homeManagerModules.default
+              {
+                home = {
+                  username = "test";
+                  homeDirectory = if isDarwin then "/Users/test" else "/home/test";
+                  stateVersion = "25.05";
+                };
+                programs.bash.enable = true;
+                programs.zsh.enable = true;
+                programs.fish.enable = true;
+                programs.workforest = {
+                  enable = true;
+                  settings = {
+                    repos = "~/code";
+                    cache.link_min = 4096;
+                  };
+                  installClaudeSkill = true;
+                  fire.enable = isLinux;
+                };
+              }
+            ];
+          };
+          files = home.config.home-files;
+        in
+        pkgs.runCommand "home-manager-module" { } (
+          ''
+            set -x
+            grep -qx 'repos = "~/code"' ${files}/.config/workforest/config.toml
+            grep -qx 'link_min = 4096' ${files}/.config/workforest/config.toml
+            test -f ${files}/.claude/skills/workforest/SKILL.md
+            grep -q 'shell-init bash' ${files}/.bashrc
+            grep -q 'shell-init zsh' ${files}/.zshrc
+            grep -q 'shell-init fish | source' ${files}/.config/fish/config.fish
+          ''
+          + lib.optionalString isLinux ''
+            grep -q 'ExecStart=.*/bin/workforest fire --yes' ${files}/.config/systemd/user/workforest-fire.service
+            grep -q 'OnCalendar=daily' ${files}/.config/systemd/user/workforest-fire.timer
+          ''
+          + ''
+            touch "$out"
+          ''
+        );
+
       build =
         pkgs:
         let
@@ -223,8 +281,11 @@
         (build pkgs).checks
         // {
           package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          home-manager-module = homeManagerCheck pkgs;
         }
       );
+
+      homeManagerModules.default = import ./nix/home-manager.nix self;
 
       devShells = forAllSystems (pkgs: {
         default = (build pkgs).shell;
