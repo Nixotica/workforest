@@ -167,6 +167,10 @@ pub struct FireArgs {
     /// has commits not on its base
     #[arg(long)]
     pub delete_branches: bool,
+    /// Don't donate the dead trees' build caches to their repos' seeds first;
+    /// see `workforest help cache donate`
+    #[arg(long)]
+    pub no_donate_cache: bool,
 }
 
 #[derive(Args)]
@@ -297,11 +301,10 @@ pub struct Removal {
     /// Also delete the trees' branches from their repos
     #[arg(long)]
     pub delete_branches: bool,
-    /// First move each tree's build caches into its main checkout, where they
-    /// are newer than the main checkout's, so that trees planted later graft
-    /// them; see `workforest help cache donate`
+    /// Don't donate the trees' build caches to their repos' seeds first; see
+    /// `workforest help cache donate`
     #[arg(long)]
-    pub donate_cache: bool,
+    pub no_donate_cache: bool,
 }
 
 const CACHE_AFTER_HELP: &str = "\
@@ -321,15 +324,19 @@ whatever their size, comma-separated, or - for none. # starts a comment:
 workforest only replaces or deletes cache paths that git ignores. Before
 trusting a clone entry, test it with `workforest cache doctor`.
 
-Grafting only goes one way. `cache donate`, and --donate-cache on cut and
-burn, give a tree's cache back to its main checkout once the tree has built
-something newer, so that trees planted later start from it.
+Trees graft from their repo's seed, kept under the forest root at
+.seeds/<repo>-<hash>. The first tree planted establishes it from the main
+checkout's caches, and the seed takes the main checkout's again whenever they
+have newer output. cut, burn and fire donate each tree's caches to the seed,
+where they are newer, so that trees planted later start from them; `cache
+donate` does it for a tree that lives on. workforest never writes to a main
+checkout's caches.
 
 The size from which files are hardlinked is $WORKFOREST_CACHE_LINK_MIN, else
 cache.link_min in the config file, else 65536.";
 
-/// Build caches, grafted from each repo's main checkout so a new tree doesn't
-/// build from cold.
+/// Build caches, grafted from each repo's seed so a new tree doesn't build from
+/// cold.
 #[derive(Args)]
 #[command(after_help = CACHE_AFTER_HELP)]
 pub struct CacheArgs {
@@ -339,17 +346,23 @@ pub struct CacheArgs {
 
 #[derive(Subcommand)]
 pub enum CacheCommand {
-    /// Show how much of each tree's caches is still hardlinked to the main checkout
+    /// Show how much of each tree's caches is still hardlinked to other
+    /// copies, and how old it is next to the seed's
     #[command(visible_alias = "st")]
     Status(ReportArgs),
     /// Graft caches into trees that are already planted
     Graft(CacheGraftArgs),
     /// Delete trees' grafted clone caches
     Drop(CacheDropArgs),
-    /// Give trees' caches back to their main checkouts, where they are newer,
-    /// so that trees planted later graft them
+    /// Give trees' caches to their repos' seeds, where they are newer, so that
+    /// trees planted later graft them
     #[command(after_help = DONATE_AFTER_HELP)]
     Donate(CacheDonateArgs),
+    /// List the repos' seeds, which trees graft from and donate to
+    Seeds(SeedsArgs),
+    /// Delete repos' seeds, so that the next tree planted seeds afresh from the
+    /// main checkout
+    Unseed(UnseedArgs),
     /// Show the caches a repo declares, and where each declaration comes from
     Paths(CachePathsArgs),
     /// Test a repo's clone caches: graft them into a throwaway worktree, build
@@ -370,26 +383,22 @@ pub struct CacheGraftArgs {
 }
 
 const DONATE_AFTER_HELP: &str = "\
-A donation replaces the main checkout's cache with the tree's: cloned, as a
-graft is, so that the tree keeps its own. --donate-cache on cut and burn moves
-the cache instead, which costs no disk.
+A donation puts a tree's cache in its repo's seed, in place of the seed's:
+cloned, as a graft is, so that the tree keeps its own. cut, burn and fire
+donate too, unless given --no-donate-cache, and move the cache instead, which
+costs no disk. The main checkout is never written to.
 
 A cache is only donated when it helps, and left alone, with a message, when:
-  - nothing in it is newer than the main checkout's;
-  - the main checkout's has a top-level directory with newer output than the
-    tree's, which donating would lose. Cargo's profiles and target triples,
-    such as target/debug and target/aarch64-linux-android, are caches of their
-    own, so only the tree's newer ones are donated;
-  - the main checkout's HEAD has commits the tree lacks, and it has built
-    since HEAD moved there, so its cache may be for newer code;
-  - a build holds a lock file in either cache, as Cargo holds .cargo-lock;
-  - the main checkout is on another filesystem.
+  - nothing in it is newer than the seed's;
+  - the seed's changed since the tree grafted it, as when another tree
+    donated, or the seed took the main checkout's newer output, so donating
+    would lose that. Cargo's profiles and target triples, such as target/debug
+    and target/aarch64-linux-android, are caches of their own, so only the
+    tree's newer ones are donated, in place of ones still as it grafted them;
+  - a build holds a lock file in the tree's cache, as Cargo holds .cargo-lock;
+  - the seed is on another filesystem.
 --force donates the whole cache whatever its age. Nothing overrides the last
-two.
-
-The donated output was built from the tree's sources, so the main checkout's
-files older than it are marked as changed, setting their modification time to
-now, and its next build rebuilds the repo's own code once.";
+two.";
 
 #[derive(Args)]
 pub struct CacheDonateArgs {
@@ -398,10 +407,26 @@ pub struct CacheDonateArgs {
     pub trees: Vec<String>,
     #[command(flatten)]
     pub target: Target,
-    /// Donate each whole cache, even when it is older than the main
-    /// checkout's or for older code
+    /// Donate each whole cache, even when it is older than the seed's or the
+    /// seed's changed since the tree grafted it
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Args)]
+pub struct SeedsArgs {
+    #[command(flatten)]
+    pub output: Output,
+}
+
+#[derive(Args)]
+pub struct UnseedArgs {
+    /// Repos whose seeds to delete, by path or by name
+    #[arg(add = ArgValueCompleter::new(complete::repos), required_unless_present = "gone")]
+    pub repos: Vec<String>,
+    /// Delete the seeds of main checkouts that no longer exist
+    #[arg(long)]
+    pub gone: bool,
 }
 
 #[derive(Args)]

@@ -10,10 +10,10 @@ use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
 
-use super::Sandbox;
+use super::{Sandbox, path};
 
 mod cargo;
-mod donate;
+mod seed;
 
 /// The default size from which cache files are hardlinked.
 const LINK_MIN: usize = 64 * 1024;
@@ -35,6 +35,29 @@ impl Sandbox {
         self.publish(&repo, ".gitignore", "/build\n");
         self.publish(&repo, ".workforest-cache", declaration);
         repo
+    }
+
+    /// The seed of `repo` under the sandbox's forest root, whether or not it
+    /// exists yet: `.seeds/<repo>-<hash>`.
+    fn seed(&self, repo: &Path) -> PathBuf {
+        self.seed_in(&self.forests(), repo)
+    }
+
+    /// The seed of `repo` under the forest root `root`.
+    fn seed_in(&self, root: &Path, repo: &Path) -> PathBuf {
+        let seeds = root.join(".seeds");
+        let name = repo.file_name().unwrap().to_str().unwrap();
+        fs::read_dir(&seeds)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|dir| {
+                let file = dir.file_name().unwrap().to_str().unwrap();
+                file.rsplit_once('-')
+                    .is_some_and(|(seeded, _)| seeded == name)
+            })
+            .unwrap_or_else(|| seeds.join(format!("{name}-none")))
     }
 
     /// Run workforest with extra environment variables.
@@ -104,8 +127,13 @@ fn planting_hardlinks_large_cache_files_and_copies_small_ones() {
 
     let out = sb.ok(&sb.root, &["new", "warm", "repos/api"]);
 
+    // The first tree of a repo seeds it from the main checkout's cache, then
+    // grafts the seed's.
     assert!(
-        out.contains("  cache build: grafted from the main checkout: 3 files, "),
+        out.contains(
+            "  cache build: seeded from the main checkout: 3 files, 128.0 KiB hardlinked, \
+             64.0 KiB copied\n  cache build: grafted from the seed: 3 files, "
+        ),
         "{out}"
     );
     let grafted = sb.forest("warm").join("api/build");
@@ -127,7 +155,12 @@ fn planting_hardlinks_large_cache_files_and_copies_small_ones() {
     // git ignores the cache, so the tree is clean and burns without --force.
     assert!(sb.ok(&sb.root, &["status", "warm"]).contains(" clean "));
     sb.ok(&sb.root, &["burn", "warm"]);
-    assert_eq!(meta(&build.join("big")).nlink(), 1);
+    // The seed keeps its link to the main checkout's large file.
+    assert_eq!(meta(&build.join("big")).nlink(), 2);
+    assert!(same_file(
+        &build.join("big"),
+        &sb.seed(&repo).join("build/big")
+    ));
     assert_eq!(fs::read(build.join("small")).unwrap().len(), LINK_MIN - 1);
 }
 
@@ -270,7 +303,7 @@ fn other_filesystem(root: &Path) -> Option<TempDir> {
 }
 
 #[test]
-fn a_cache_on_another_filesystem_is_left_cold() {
+fn a_main_checkout_on_another_filesystem_seeds_nothing() {
     let sb = Sandbox::new();
     let Some(elsewhere) = other_filesystem(&sb.root) else {
         eprintln!("skipped: /dev/shm is missing or on the same filesystem");
@@ -287,7 +320,10 @@ fn a_cache_on_another_filesystem_is_left_cold() {
 
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(
-        stdout(&out).contains("is on another filesystem, so it can't be hardlinked"),
+        stdout(&out).contains(
+            "  cache build: the main checkout's is on another filesystem from the seed, so the \
+             seed can't take it\n  cache build: the seed has none; starting cold\n"
+        ),
         "{}",
         stdout(&out)
     );
@@ -463,8 +499,10 @@ fn force_keeps_the_trees_cache_when_there_is_nothing_to_replace_it_with() {
     let sb = Sandbox::new();
     let repo = sb.cached_repo("api", "build clone\n");
     write(&repo.join("build/big"), LINK_MIN);
-    sb.ok(&sb.root, &["new", "keep", "repos/api"]);
+    // Planted cold, so there is no seed.
+    sb.ok(&sb.root, &["new", "keep", "repos/api", "--no-cache"]);
     let tree = sb.forest("keep").join("api");
+    write(&tree.join("build/mine"), 10);
     fs::write(tree.join("build/mine"), "built in the tree").unwrap();
     fs::rename(repo.join("build"), repo.join("elsewhere")).unwrap();
 
@@ -517,6 +555,45 @@ fn a_later_graft_marks_the_trees_older_files_as_changed() {
     let out = sb.ok(&sb.root, &["new", "fresh", "repos/api"]);
     assert!(out.contains("cache build: grafted"), "{out}");
     assert!(!out.contains("as changed"), "{out}");
+}
+
+#[test]
+fn a_later_graft_marks_files_in_submodules_as_changed_too() {
+    let sb = Sandbox::new();
+    sb.repo("lib");
+    let repo = sb.cached_repo("api", "build clone\n");
+    let lib = sb.root.join("remotes/lib.git");
+    let file_protocol = ["-c", "protocol.file.allow=always"];
+    sb.git(
+        &repo,
+        &[
+            &file_protocol[..],
+            &["submodule", "add", "--quiet", path(&lib), "lib"],
+        ]
+        .concat(),
+    );
+    sb.git(&repo, &["commit", "--quiet", "--message", "lib"]);
+    sb.git(&repo, &["push", "--quiet", "origin", "main"]);
+    sb.ok(&sb.root, &["new", "later", "repos/api", "--no-cache"]);
+    let tree = sb.forest("later").join("api");
+    sb.git(
+        &tree,
+        &[
+            &file_protocol[..],
+            &["submodule", "update", "--init", "--quiet"],
+        ]
+        .concat(),
+    );
+    // The submodule was checked out before the main checkout's last build,
+    // as when the tree moved it to another commit since.
+    set_modified(&tree.join("lib/README"), 1_000_000_000);
+    write(&repo.join("build/big"), LINK_MIN);
+    set_modified(&repo.join("build/big"), 1_200_000_000);
+
+    let out = sb.ok(&tree, &["cache", "graft"]);
+
+    assert!(out.contains("older than it as changed"), "{out}");
+    assert!(meta(&tree.join("lib/README")).modified().unwrap() > at(1_200_000_000));
 }
 
 #[test]

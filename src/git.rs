@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::{Duration, SystemTime};
 
 use crate::error::{Context, Result, bail};
 
@@ -267,21 +266,16 @@ pub fn tracks(dir: &Path, path: &str) -> bool {
     output(dir, ["ls-files", "--", &pathspec]).is_none_or(|files| !files.is_empty())
 }
 
-/// The files of the worktree at `dir` that git tracks, or would track if
-/// added: those it doesn't ignore. Paths are relative to `dir`.
+/// The files of the worktree at `dir` that git tracks, in its checked-out
+/// submodules too, or would track if added: those it doesn't ignore. Paths are
+/// relative to `dir`.
 pub fn files(dir: &Path) -> Option<Vec<PathBuf>> {
-    let list = stdout(
-        dir,
-        [
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ],
-    )?;
-    let files = list
+    // git can't list the files of submodules and untracked ones at once.
+    let tracked = stdout(dir, ["ls-files", "-z", "--cached", "--recurse-submodules"])?;
+    let untracked = stdout(dir, ["ls-files", "-z", "--others", "--exclude-standard"])?;
+    let files = tracked
         .split(|&byte| byte == 0)
+        .chain(untracked.split(|&byte| byte == 0))
         .filter(|path| !path.is_empty())
         .map(|path| PathBuf::from(OsStr::from_bytes(path)))
         .collect();
@@ -366,23 +360,6 @@ fn merged_commits(dir: &Path, branch: &str, base: &str) -> bool {
         let action = subject.split([':', ' ']).next().unwrap_or_default();
         MADE.contains(&action) && succeeds(dir, ["merge-base", "--is-ancestor", commit, base])
     })
-}
-
-/// When HEAD last moved in the worktree at `dir`, as its reflog records it: a
-/// commit, checkout, pull or reset there. `None` without a reflog.
-pub fn head_moved(dir: &Path) -> Option<SystemTime> {
-    let args = [
-        "log",
-        "--walk-reflogs",
-        "-1",
-        "--date=unix",
-        "--format=%gd",
-        "HEAD",
-    ];
-    // The entry's selector carries its time: `HEAD@{1700000000}`.
-    let selector = output(dir, args)?;
-    let secs = selector.strip_prefix("HEAD@{")?.strip_suffix('}')?;
-    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs.parse().ok()?))
 }
 
 /// The branch checked out in the worktree at `dir`, unless its HEAD is detached.
