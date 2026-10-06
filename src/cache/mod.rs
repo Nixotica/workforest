@@ -8,6 +8,9 @@
 //!   hardlinked and small ones copied (see [`clone`]).
 //! - `never`: left cold.
 //!
+//! A tree's cache can also go the other way, donated back to the main
+//! checkout so that trees planted later graft a warm one (see [`donate`]).
+//!
 //! workforest only ever replaces or deletes a cache path that git ignores and
 //! tracks nothing under, so a mistaken declaration can't destroy source.
 
@@ -15,6 +18,7 @@ mod cargo;
 mod clone;
 pub mod declare;
 pub mod doctor;
+mod donate;
 mod ecosystem;
 mod glob;
 mod walk;
@@ -25,6 +29,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 pub use declare::declared;
+pub use donate::{Transfer, donate_tree};
 
 use crate::error::{Context, Result, bail};
 use crate::git;
@@ -69,6 +74,9 @@ pub struct Entry {
     pub origin: String,
     /// Whether the entry is built in (see [`ecosystem`]) rather than declared.
     pub built_in: bool,
+    /// Whether each top-level directory of the cache is a cache of its own,
+    /// so that a donation can give up some of them and not others.
+    pub parts: bool,
 }
 
 /// Print each warning about a repo's declarations.
@@ -143,7 +151,7 @@ fn graft_clone(
     }
     // Clone beside the cache and move it into place, so that an interrupted
     // graft never leaves a partial cache that looks whole.
-    let staging = staging_path(&entry.path);
+    let staging = staging_path(&entry.path, "workforest-graft");
     discard_staging(tree, &staging)?;
     let staged = tree.join(&staging);
     let grafted = clone::clone_dir(&src, &staged, source, link_min, &entry.always_copy)
@@ -220,12 +228,13 @@ fn mark_older_changed(tree: &Path, newest: SystemTime) -> Result<u64> {
     Ok(marked)
 }
 
-/// Where the cache at `path` is cloned before it is moved into place: beside
-/// it, so on the same filesystem, under a name that is workforest's own.
-fn staging_path(path: &str) -> String {
+/// Where the cache at `path` is staged for `purpose`, such as being cloned
+/// before it is moved into place: beside it, so on the same filesystem, under
+/// a name that is workforest's own.
+fn staging_path(path: &str, purpose: &str) -> String {
     match path.rsplit_once('/') {
-        Some((dir, name)) => format!("{dir}/.{name}.workforest-graft"),
-        None => format!(".{path}.workforest-graft"),
+        Some((dir, name)) => format!("{dir}/.{name}.{purpose}"),
+        None => format!(".{path}.{purpose}"),
     }
 }
 
@@ -281,19 +290,41 @@ fn check_replaceable(tree: &Path, path: &str, dir: bool) -> Result<()> {
 }
 
 /// What the tree at `tree` has of the cache `entry` declares: how much of it
-/// is still hardlinked to the main checkout, or why there's nothing to count.
-pub fn describe(tree: &Path, entry: &Entry) -> String {
+/// is still hardlinked to the main checkout at `source`, and how its newest
+/// file's age compares with the main checkout's, or why there's nothing to
+/// count.
+pub fn describe(tree: &Path, source: &Path, entry: &Entry) -> String {
     match state(tree, entry) {
         CacheState::Never => "never".to_owned(),
         CacheState::Cold => "cold".to_owned(),
         CacheState::Blocked(problem) => problem,
-        CacheState::Grafted(usage) => format!(
-            "{}, {} hardlinked, {} own",
-            count(usage.files, "file"),
-            human_bytes(usage.shared),
-            human_bytes(usage.own)
-        ),
+        CacheState::Grafted(usage) => {
+            let mut shown = format!(
+                "{}, {} hardlinked, {} own",
+                count(usage.files, "file"),
+                human_bytes(usage.shared),
+                human_bytes(usage.own)
+            );
+            if let Some(ours) = usage.newest {
+                let main = match newest(&source.join(&entry.path)) {
+                    Some(main) => format!("the main checkout's: {} old", age(main)),
+                    None => "the main checkout has none".to_owned(),
+                };
+                shown.push_str(&format!(", newest {} old ({main})", age(ours)));
+            }
+            shown
+        }
     }
+}
+
+/// The modification time of the newest file in the cache at `dir`, if it
+/// holds any. Unreadable parts are left out.
+pub fn newest(dir: &Path) -> Option<SystemTime> {
+    walk::walk(dir)
+        .flatten()
+        .filter(|(_, meta)| meta.is_file())
+        .filter_map(|(_, meta)| meta.modified().ok())
+        .max()
 }
 
 /// Where a tree's cache stands.
@@ -326,6 +357,20 @@ fn count(n: u64, noun: &str) -> String {
         format!("1 {noun}")
     } else {
         format!("{n} {noun}s")
+    }
+}
+
+/// How long ago `time` was, roughly, in the largest unit that keeps it at 1 or
+/// more: `12 s`, `5 min`, `3 h`, `58 days`. A time in the future is `0 s`.
+fn age(time: SystemTime) -> String {
+    let secs = SystemTime::now()
+        .duration_since(time)
+        .map_or(0, |ago| ago.as_secs());
+    match secs {
+        0..60 => format!("{secs} s"),
+        60..3600 => format!("{} min", secs / 60),
+        3600..86400 => format!("{} h", secs / 3600),
+        _ => count(secs / 86400, "day"),
     }
 }
 

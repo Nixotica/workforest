@@ -165,7 +165,7 @@ fn clone_item(
 
 impl Cloned {
     /// Count what `other` cloned in this too.
-    fn add(&mut self, other: Cloned) {
+    pub fn add(&mut self, other: Cloned) {
         self.files += other.files;
         self.linked += other.linked;
         self.copied += other.copied;
@@ -193,6 +193,8 @@ pub struct Usage {
     pub files: u64,
     pub shared: u64,
     pub own: u64,
+    /// The latest modification time of a file in it, if it holds any.
+    pub newest: Option<SystemTime>,
 }
 
 /// Walk the cache at `dir`. Unreadable parts are left out of the count.
@@ -203,6 +205,7 @@ pub fn usage(dir: &Path) -> Usage {
             continue;
         }
         usage.files += 1;
+        usage.newest = usage.newest.max(meta.modified().ok());
         if meta.nlink() > 1 {
             usage.shared += meta.len();
         } else {

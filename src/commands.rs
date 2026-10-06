@@ -3,15 +3,16 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use clap::CommandFactory;
 use serde_json::{Value, json};
 
 use crate::cache;
 use crate::cli::{
-    Branching, BurnArgs, CacheCommand, CacheDoctorArgs, CacheDropArgs, CacheGraftArgs,
-    CachePathsArgs, Caching, Cli, Command, CutArgs, FireArgs, ForestArg, LsArgs, NewArgs,
-    PlantArgs, Removal, ReportArgs, SetupArgs,
+    Branching, BurnArgs, CacheCommand, CacheDoctorArgs, CacheDonateArgs, CacheDropArgs,
+    CacheGraftArgs, CachePathsArgs, Caching, Cli, Command, CutArgs, FireArgs, ForestArg, LsArgs,
+    NewArgs, PlantArgs, Removal, ReportArgs, SetupArgs,
 };
 use crate::complete;
 use crate::config::{self, Config};
@@ -61,6 +62,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 CacheCommand::Status(args) => cache_status(&config, args)?,
                 CacheCommand::Graft(args) => cache_graft(&config, args)?,
                 CacheCommand::Drop(args) => cache_drop(&config, args)?,
+                CacheCommand::Donate(args) => cache_donate(&config, args)?,
                 CacheCommand::Paths(args) => cache_paths(&config, args)?,
                 CacheCommand::Doctor(args) => cache_doctor(&config, args)?,
             }
@@ -265,10 +267,21 @@ fn point_out_of(gone: &Path, way_out: &Path) {
     );
 }
 
-/// Remove one tree's worktree, and its branch if asked, then forget it. A tree
-/// whose directory and repo are both gone only needs forgetting.
+/// Remove one tree's worktree, donating its caches and deleting its branch if
+/// asked, then forget it. A tree whose directory and repo are both gone only
+/// needs forgetting.
 fn remove_tree(forest: &Forest, tree: &Tree, removal: &Removal) -> Result<()> {
     let dir = forest.tree_dir(&tree.repo);
+    if removal.donate_cache && dir.is_dir() && tree.source.is_dir() {
+        let header = format!("{}: donating caches", tree.repo);
+        cache::donate_tree(
+            &dir,
+            &tree.source,
+            cache::Transfer::Move,
+            false,
+            Some(&header),
+        );
+    }
     if dir.is_dir() {
         git::remove_worktree(&tree.source, &dir, removal.force)?;
     } else if tree.source.is_dir() {
@@ -498,6 +511,14 @@ fn path_json(path: &Path) -> Value {
     json!(path.to_string_lossy())
 }
 
+/// A time as JSON: whole seconds since the epoch, or `null` for none.
+fn time_json(time: Option<SystemTime>) -> Value {
+    json!(
+        time.and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|since| since.as_secs())
+    )
+}
+
 /// What the manifest records about `tree`, as JSON.
 fn tree_json(forest: &Forest, tree: &Tree) -> Value {
     json!({
@@ -569,6 +590,7 @@ fn fire(config: &Config, args: FireArgs) -> Result<()> {
                 let removal = Removal {
                     force: false,
                     delete_branches: delete_branch,
+                    donate_cache: false,
                 };
                 removals.push((tree.clone(), removal));
             }
@@ -760,7 +782,11 @@ fn cache_status(config: &Config, args: ReportArgs) -> Result<()> {
         let mut caches = Vec::new();
         for entry in &declared.entries {
             if !json {
-                println!("    {:<22} {}", entry.path, cache::describe(&dir, entry));
+                println!(
+                    "    {:<22} {}",
+                    entry.path,
+                    cache::describe(&dir, &tree.source, entry)
+                );
                 continue;
             }
             let mut cache = json!({"path": entry.path, "mode": entry.mode.to_string()});
@@ -776,6 +802,8 @@ fn cache_status(config: &Config, args: ReportArgs) -> Result<()> {
                     cache["files"] = json!(usage.files);
                     cache["shared_bytes"] = json!(usage.shared);
                     cache["own_bytes"] = json!(usage.own);
+                    cache["newest"] = time_json(usage.newest);
+                    cache["main_newest"] = time_json(cache::newest(&tree.source.join(&entry.path)));
                 }
             }
             caches.push(cache);
@@ -805,6 +833,22 @@ fn cache_graft(config: &Config, args: CacheGraftArgs) -> Result<()> {
         }
         println!("{}", tree.repo);
         cache::graft_tree(&dir, &tree.source, link_min, args.force);
+    }
+    Ok(())
+}
+
+fn cache_donate(config: &Config, args: CacheDonateArgs) -> Result<()> {
+    let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
+    let link_min = config.link_min()?.value;
+    for tree in selected_trees(&forest, &args.trees)? {
+        let dir = forest.tree_dir(&tree.repo);
+        if !dir.is_dir() {
+            println!("{}: MISSING", tree.repo);
+            continue;
+        }
+        println!("{}", tree.repo);
+        let transfer = cache::Transfer::Clone { link_min };
+        cache::donate_tree(&dir, &tree.source, transfer, args.force, None);
     }
     Ok(())
 }

@@ -99,12 +99,16 @@ impl Declared {
             .always_copy
             .or_else(|| earlier.as_ref().map(|entry| entry.always_copy.clone()))
             .unwrap_or_default();
+        // Whether its parts are caches of their own is the build system's
+        // to say, so overriding a built-in entry keeps that too.
+        let parts = earlier.as_ref().is_some_and(|entry| entry.parts);
         let entry = Entry {
             path: line.path,
             mode: line.mode,
             always_copy,
             origin,
             built_in: false,
+            parts,
         };
         match earlier {
             Some(earlier) => *earlier = entry,

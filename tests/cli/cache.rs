@@ -13,6 +13,7 @@ use tempfile::TempDir;
 use super::Sandbox;
 
 mod cargo;
+mod donate;
 
 /// The default size from which cache files are hardlinked.
 const LINK_MIN: usize = 64 * 1024;

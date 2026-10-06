@@ -27,6 +27,9 @@ pub struct Ecosystem {
     pub inert: &'static [&'static str],
     /// The shell command `cache doctor` builds with unless given `--cmd`.
     pub build: &'static str,
+    /// Whether each top-level directory of the cache is a cache of its own,
+    /// which a donation can give up without the others.
+    pub parts: bool,
 }
 
 /// Every ecosystem workforest knows.
@@ -45,6 +48,7 @@ impl Ecosystem {
                 .collect(),
             origin: format!("built in ({})", self.name),
             built_in: true,
+            parts: self.parts,
         }
     }
 }

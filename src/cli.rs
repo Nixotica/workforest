@@ -297,6 +297,11 @@ pub struct Removal {
     /// Also delete the trees' branches from their repos
     #[arg(long)]
     pub delete_branches: bool,
+    /// First move each tree's build caches into its main checkout, where they
+    /// are newer than the main checkout's, so that trees planted later graft
+    /// them; see `workforest help cache donate`
+    #[arg(long)]
+    pub donate_cache: bool,
 }
 
 const CACHE_AFTER_HELP: &str = "\
@@ -315,6 +320,10 @@ whatever their size, comma-separated, or - for none. # starts a comment:
 
 workforest only replaces or deletes cache paths that git ignores. Before
 trusting a clone entry, test it with `workforest cache doctor`.
+
+Grafting only goes one way. `cache donate`, and --donate-cache on cut and
+burn, give a tree's cache back to its main checkout once the tree has built
+something newer, so that trees planted later start from it.
 
 The size from which files are hardlinked is $WORKFOREST_CACHE_LINK_MIN, else
 cache.link_min in the config file, else 65536.";
@@ -337,6 +346,10 @@ pub enum CacheCommand {
     Graft(CacheGraftArgs),
     /// Delete trees' grafted clone caches
     Drop(CacheDropArgs),
+    /// Give trees' caches back to their main checkouts, where they are newer,
+    /// so that trees planted later graft them
+    #[command(after_help = DONATE_AFTER_HELP)]
+    Donate(CacheDonateArgs),
     /// Show the caches a repo declares, and where each declaration comes from
     Paths(CachePathsArgs),
     /// Test a repo's clone caches: graft them into a throwaway worktree, build
@@ -352,6 +365,41 @@ pub struct CacheGraftArgs {
     #[command(flatten)]
     pub target: Target,
     /// Replace caches the trees already have
+    #[arg(long)]
+    pub force: bool,
+}
+
+const DONATE_AFTER_HELP: &str = "\
+A donation replaces the main checkout's cache with the tree's: cloned, as a
+graft is, so that the tree keeps its own. --donate-cache on cut and burn moves
+the cache instead, which costs no disk.
+
+A cache is only donated when it helps, and left alone, with a message, when:
+  - nothing in it is newer than the main checkout's;
+  - the main checkout's has a top-level directory with newer output than the
+    tree's, which donating would lose. Cargo's profiles and target triples,
+    such as target/debug and target/aarch64-linux-android, are caches of their
+    own, so only the tree's newer ones are donated;
+  - the main checkout's HEAD has commits the tree lacks, and it has built
+    since HEAD moved there, so its cache may be for newer code;
+  - a build holds a lock file in either cache, as Cargo holds .cargo-lock;
+  - the main checkout is on another filesystem.
+--force donates the whole cache whatever its age. Nothing overrides the last
+two.
+
+The donated output was built from the tree's sources, so the main checkout's
+files older than it are marked as changed, setting their modification time to
+now, and its next build rebuilds the repo's own code once.";
+
+#[derive(Args)]
+pub struct CacheDonateArgs {
+    /// Trees whose caches to donate, by name [default: every tree in the forest]
+    #[arg(add = ArgValueCompleter::new(complete::trees))]
+    pub trees: Vec<String>,
+    #[command(flatten)]
+    pub target: Target,
+    /// Donate each whole cache, even when it is older than the main
+    /// checkout's or for older code
     #[arg(long)]
     pub force: bool,
 }

@@ -68,4 +68,11 @@ pub const CARGO: Ecosystem = Ecosystem {
         "deps/*.o",
     ],
     build: "cargo build --all-targets && cargo doc",
+    // Each profile (`debug`, `release`) and each target triple
+    // (`aarch64-linux-android`) builds into a directory of its own, with its
+    // own lock and fingerprints. A cross build's build scripts and proc macros
+    // build for the host, under `debug`, but Cargo keys every unit's freshness
+    // on its dependencies' fingerprints and output times, so pairing one
+    // checkout's `debug` with another's triple can only cost rebuilds.
+    parts: true,
 };

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use std::time::{Duration, SystemTime};
 
 use crate::error::{Context, Result, bail};
 
@@ -365,6 +366,23 @@ fn merged_commits(dir: &Path, branch: &str, base: &str) -> bool {
         let action = subject.split([':', ' ']).next().unwrap_or_default();
         MADE.contains(&action) && succeeds(dir, ["merge-base", "--is-ancestor", commit, base])
     })
+}
+
+/// When HEAD last moved in the worktree at `dir`, as its reflog records it: a
+/// commit, checkout, pull or reset there. `None` without a reflog.
+pub fn head_moved(dir: &Path) -> Option<SystemTime> {
+    let args = [
+        "log",
+        "--walk-reflogs",
+        "-1",
+        "--date=unix",
+        "--format=%gd",
+        "HEAD",
+    ];
+    // The entry's selector carries its time: `HEAD@{1700000000}`.
+    let selector = output(dir, args)?;
+    let secs = selector.strip_prefix("HEAD@{")?.strip_suffix('}')?;
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs.parse().ok()?))
 }
 
 /// The branch checked out in the worktree at `dir`, unless its HEAD is detached.

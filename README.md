@@ -142,6 +142,7 @@ unpack wherever they read skills from.
 | `workforest cache status [forest]` | per tree, how much of each build cache is still hardlinked to the main checkout |
 | `workforest cache graft [tree...]` | graft build caches into trees already planted (`--force` replaces them) |
 | `workforest cache drop [tree...]` | delete trees' grafted build caches |
+| `workforest cache donate [tree...]` | give trees' build caches back to their main checkouts, where they are newer |
 | `workforest cache paths <repo path>` | the build caches a repo declares, and where each is declared |
 | `workforest cache doctor <repo path>` | test that a repo's build caches are safe to graft |
 
@@ -301,9 +302,51 @@ A grafted cache is a snapshot of the main checkout's when the tree was
 planted. A build replaces the large files it rebuilds rather than rewriting
 them, which is what `cache doctor` checks, so a build in either checkout breaks
 those files' hardlinks: the two drift apart without either changing the other;
-`workforest cache status` shows how much each tree still shares. The graft is
+`workforest cache status` shows how much each tree still shares, and how old
+each tree's newest file is next to the main checkout's. The graft is
 only as warm as the main checkout's last build: one built long ago grafts
 fine, but leaves the tree more to rebuild.
+
+### Donating a cache back
+
+Grafting only goes one way, so when all the building happens in forests, the
+main checkout's caches only get older, and every new tree starts from them.
+`--donate-cache` on `burn` and `cut` gives each tree's caches back to its main
+checkout before removing the tree, and `workforest cache donate` does it for a
+forest that lives on:
+
+```sh
+workforest burn fix-login --delete-branches --donate-cache
+workforest cache donate -f auth-migration        # every tree, or name some
+```
+
+A donation replaces the main checkout's cache with the tree's, which was
+grafted from it and built on, rather than merging the two. `burn` and `cut`
+move it there, which costs no disk; `cache donate` clones it, the way a graft
+does, so that the tree keeps its own. Either way, a cache is only donated when
+that helps, and is left alone, with a line saying why, when nothing in it is
+newer than the main checkout's, or when the main checkout's has a top-level
+directory with newer output than the tree's, which the donation would lose.
+Cargo's profiles and target triples, such as `target/debug` and
+`target/aarch64-linux-android`, are caches of their own, so a tree gives up
+only its newer ones: one forest's desktop build and another's Android build both
+end up in the main checkout. It is left alone, too, when the main checkout's
+`HEAD` has commits the tree lacks and it has built since `HEAD` moved there,
+since its cache may then be for newer code than the tree's. A main checkout that
+is pulled but never built doesn't stop a donation. `cache donate --force`
+donates the whole cache whatever its age.
+
+The donated output was built from the tree's sources, which may not be the main
+checkout's. A build tool would take it for built from the main checkout's
+sources, since those are older, so the donation marks the main checkout's files
+older than it as changed, as a graft does a tree's, setting their modification
+time to now; the main checkout's next build then rebuilds the repo's own code
+once, while dependencies stay warm. An editor with one of those files open may
+notice its time change. A cache that a build is still writing is never donated,
+nor one replaced that a build in the main checkout is using: a running build
+holds its cache's lock files, as Cargo holds `debug/.cargo-lock`, and workforest
+holds them in turn until the donation is done. It also needs both checkouts on
+one filesystem, and the cache path ignored by git in both.
 
 workforest only grafts into, replaces or deletes a cache path that git ignores
 and tracks nothing under, so a mistaken declaration can't touch source. A cache
@@ -352,7 +395,7 @@ git couldn't tell.
 | --- | --- |
 | `ls [forest] --json` | `forest_root`, and `forests`: each with `name`, `path`, and `trees`: each with `repo`, `path`, `source` (its repo's main checkout), `branch`, `base` |
 | `status [forest] --json` | the forest's `name`, `path`, and `trees`: as for `ls`, plus `state` (`clean`, `dirty`, `landed`, `missing` or `unknown`), `ahead` and `behind` its base, and `unpushed`: how many commits ahead its upstream lacks, or `null` when that doesn't matter because nothing is ahead or it has landed |
-| `cache status [forest] --json` | the forest's `name`, `path`, and `trees`: as for `ls`, plus `missing`, and `caches`: each with `path`, `mode`, and `state`: `grafted` (with `files`, `shared_bytes` hardlinked to the main checkout and `own_bytes`), `cold`, `never`, or `blocked` (with `problem`) |
+| `cache status [forest] --json` | the forest's `name`, `path`, and `trees`: as for `ls`, plus `missing`, and `caches`: each with `path`, `mode`, and `state`: `grafted` (with `files`, `shared_bytes` hardlinked to the main checkout, `own_bytes`, and the modification times of the newest file in the tree's cache and in the main checkout's, `newest` and `main_newest`, in seconds since the epoch or `null` for none), `cold`, `never`, or `blocked` (with `problem`) |
 | `fire --json` | `dry_run`, and `forests`, every one, in flight or not: each with `name`, `path`, `action` (`burn`, `cut` or `keep`), `trees` (each with `repo`, `verdict`: `dead`, `live` or `unknown`, `reason`, and `keeps_branch`), `strays` (checkouts its manifest doesn't record), and, with `--yes`, `done` and `error`. A forest that couldn't be read has only `name` and `error` |
 
 With `--json`, `fire --yes` prints nothing but the object; where to `cd`

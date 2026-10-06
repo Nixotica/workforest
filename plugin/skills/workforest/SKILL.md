@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.13.0 or later.
+This skill drives the `workforest` command-line tool, version 0.16.0 or later.
 Check that it is installed:
 
 ```sh
@@ -103,7 +103,7 @@ forest you're standing in.
 | `workforest exec [-f <forest>] [--parallel [N]] -- <command>...` | run a command in every tree |
 | `workforest setup --repos <dir>...` | say where repos live, so that they can be named |
 | `workforest config` | each setting, its value, and where it comes from |
-| `workforest cache <sub>` | build caches: `status`, `graft`, `drop`, `paths`, `doctor` |
+| `workforest cache <sub>` | build caches: `status`, `graft`, `drop`, `donate`, `paths`, `doctor` |
 
 Aliases: `add`=`plant`, `remove`=`cut`, `rm`/`delete`=`burn`,
 `list`=`ls`, `st`=`status`, `dir`=`path`.
@@ -137,6 +137,8 @@ Options:
   to do, pass `--json` rather than parsing columns; the fields are listed under
   "JSON output" in the README.
 - `--no-cache` — on `new`/`plant`, don't graft the repos' build caches.
+- `--donate-cache` — on `cut`/`burn`, first move each tree's build caches into
+  its main checkout, where they are newer (see "Build caches").
 - `--sparse <dir>...` — on `new`/`plant`, check out only those directories of
   each repo, plus its top-level files. For a large repo where the work touches
   a few directories; the main checkout and other trees stay whole. Put it after
@@ -217,8 +219,22 @@ build. Builds in the tree replace what they rebuild, so the tree drifts away
 from the main checkout without changing it. `cache graft` into a tree planted
 earlier sets the modification time of the tree's files older than the graft to
 now, so that its output can't pass as built from them. `workforest cache
-status` shows how much each tree still shares. workforest only touches cache paths that git
+status` shows how much each tree still shares, and how old its newest file is
+next to the main checkout's. workforest only touches cache paths that git
 ignores, and leaves a cache cold across filesystems.
+
+Grafting only goes one way, so when all the building happens in forests, the
+main checkout's cache only gets older. `--donate-cache` on `burn`/`cut` moves
+each tree's cache into its main checkout before removing the tree; `workforest
+cache donate` clones it there from a forest that lives on. A donation replaces
+the main checkout's cache, and only goes ahead when the tree's has newer output
+and the main checkout's has none newer that it would lose; Cargo's profiles and
+target triples (`target/debug`, `target/aarch64-linux-android`) are donated one
+by one. It skips, saying why, when the main checkout has built since its `HEAD`
+moved to commits the tree lacks, and never touches a cache that a running build
+holds a lock in. It marks the main checkout's files older than the donated output
+as changed, so the main checkout rebuilds its own code once. `cache donate
+--force` donates whatever the ages.
 
 ### Earning a new entry
 
@@ -263,6 +279,10 @@ gone, then burn:
 workforest exec -f <forest> -- git fetch --quiet --prune
 workforest burn <forest> --delete-branches
 ```
+
+If the trees built, add `--donate-cache`, so that the next forest of each repo
+grafts their caches rather than the main checkout's older ones; it skips
+whatever wouldn't help.
 
 A refusal after fetching means some of the work is not on the base: commits
 made after the merge, a merge that took only part of the branch, or a merge
