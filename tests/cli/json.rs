@@ -125,6 +125,13 @@ fn cache_status_json_counts_what_each_cache_shares() {
     assert_eq!(build["files"], 2);
     assert_eq!(build["shared_bytes"], 70_000);
     assert_eq!(build["own_bytes"], 1);
+    // Grafted copies keep their times, so the tree's newest file is as old as
+    // the seed's.
+    assert!(
+        build["newest"].as_u64().is_some_and(|secs| secs > 0),
+        "{build}"
+    );
+    assert_eq!(build["newest"], build["seed_newest"]);
     assert_eq!(tree["caches"][1]["state"], "never");
 }
 

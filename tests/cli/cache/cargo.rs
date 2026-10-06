@@ -182,7 +182,14 @@ fn cargo_target_is_grafted_without_a_declaration() {
         &[(".gitignore", "/target\n"), ("Cargo.toml", MANIFEST)],
     );
     let target = repo.join("target");
-    write(&target.join("debug/.cargo-lock"), 0);
+    let locks = [
+        "debug/.cargo-lock",
+        "debug/.cargo-build-lock",
+        "debug/.cargo-artifact-lock",
+    ];
+    for lock in locks {
+        write(&target.join(lock), 0);
+    }
     // Each large enough to be hardlinked by size alone; aws-lc-sys's build
     // script prints over 500 KB of `output`.
     let private = [
@@ -202,7 +209,7 @@ fn cargo_target_is_grafted_without_a_declaration() {
     let out = sb.ok(&sb.root, &["new", "rusty", "repos/api"]);
 
     assert!(
-        out.contains("  cache target: grafted from the main checkout: 10 files"),
+        out.contains("  cache target: grafted from the seed: 12 files"),
         "{out}"
     );
     let grafted = sb.forest("rusty").join("api/target");
@@ -210,7 +217,7 @@ fn cargo_target_is_grafted_without_a_declaration() {
         &target.join("debug/deps/libapi-0123.rlib"),
         &grafted.join("debug/deps/libapi-0123.rlib")
     ));
-    for file in private.iter().chain(&["debug/.cargo-lock"]) {
+    for file in private.iter().chain(&locks) {
         assert!(
             !same_file(&target.join(file), &grafted.join(file)),
             "{file} should be the tree's own"
@@ -504,5 +511,336 @@ fn cargos_globs_keep_the_main_checkout_safe_with_everything_else_hardlinked() {
             .contains("main checkout        unchanged: the build wrote nothing through a hardlink"),
         "{}",
         stdout(&out)
+    );
+}
+
+/// A build script that says it has started, then waits for a file called `go`
+/// beside the manifest, holding the build, and its lock, until then.
+const WAITING_BUILD_SCRIPT: &str = r#"
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    std::fs::write(dir.join("started"), "").unwrap();
+    for _ in 0..600 {
+        if dir.join("go").exists() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("never told to go");
+}
+"#;
+
+/// A `cargo build` in progress, held in its build script until told to go.
+struct Held {
+    dir: PathBuf,
+    cargo: std::process::Child,
+}
+
+impl Sandbox {
+    /// Start a build in `dir` of a package with [`WAITING_BUILD_SCRIPT`], and
+    /// return once it is waiting in the build script.
+    fn hold_build(&self, dir: &Path) -> Held {
+        let _ = fs::remove_file(dir.join("started"));
+        let _ = fs::remove_file(dir.join("go"));
+        let mut cargo = self
+            .cargo_free(&mut Command::new("cargo"))
+            .current_dir(dir)
+            .args(["build", "--quiet"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("run cargo");
+        for _ in 0..1200 {
+            if dir.join("started").exists() {
+                return Held {
+                    dir: dir.to_path_buf(),
+                    cargo,
+                };
+            }
+            if let Some(status) = cargo.try_wait().unwrap() {
+                panic!("cargo finished before its build script started: {status}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = cargo.kill();
+        panic!("cargo's build script never started in {}", dir.display());
+    }
+}
+
+impl Held {
+    /// Let the build finish, expecting it to succeed.
+    fn finish(mut self) {
+        fs::write(self.dir.join("go"), "").unwrap();
+        let status = self.cargo.wait().unwrap();
+        assert!(status.success(), "cargo build in {}", self.dir.display());
+    }
+}
+
+/// The host's target triple, as rustc reports it.
+fn host_triple() -> String {
+    let out = Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .expect("run rustc");
+    stdout(&out)
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .expect("rustc names its host")
+        .to_owned()
+}
+
+/// Every file under `dir` by path, with what a write to it would change:
+/// inode, modification time and size.
+fn stamps(dir: &Path) -> std::collections::BTreeMap<PathBuf, (u64, i64, i64, u64)> {
+    let mut stamps = std::collections::BTreeMap::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in fs::read_dir(&next).unwrap().flatten() {
+            let meta = entry.metadata().unwrap();
+            if meta.is_dir() {
+                pending.push(entry.path());
+            } else {
+                let stamp = (meta.ino(), meta.mtime(), meta.mtime_nsec(), meta.size());
+                stamps.insert(entry.path(), stamp);
+            }
+        }
+    }
+    stamps
+}
+
+/// Commit what `tree` changed and push it, so that it can be burned.
+fn push_work(sb: &Sandbox, tree: &Path) {
+    sb.git(tree, &["commit", "--quiet", "--all", "--message", "work"]);
+    sb.git(tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
+}
+
+#[test]
+fn a_target_donated_to_the_seed_leaves_the_next_tree_building_its_own_sources() {
+    if !have_cargo() {
+        return;
+    }
+    let sb = Sandbox::new();
+    let repo = sb.cargo_repo("A");
+    assert_eq!(sb.build_and_run(&repo), "A");
+    sb.ok(&sb.root, &["new", "change", "repos/gen"]);
+    let tree = sb.forest("change").join("gen");
+    fs::write(tree.join("data.txt"), "B").unwrap();
+    assert_eq!(sb.build_and_run(&tree), "B");
+    push_work(&sb, &tree);
+    let main = stamps(&repo.join("target"));
+
+    let out = sb.workforest_for_cargo(&["burn", "change"], &[]);
+
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(
+        stdout(&out).contains("  cache target: moved debug to the seed: "),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stamps(&repo.join("target")) == main,
+        "the main checkout's cache changed"
+    );
+    sb.ok(&sb.root, &["new", "next", "repos/gen"]);
+    let next = sb.forest("next").join("gen");
+    assert!(
+        fs::read_to_string(generated(&next))
+            .unwrap()
+            .contains("\"B\""),
+        "the next tree holds what the last one built"
+    );
+    assert_eq!(
+        sb.build_and_run(&next),
+        "A",
+        "the next tree ran output built from the last one's sources"
+    );
+    assert_eq!(sb.build_and_run(&repo), "A");
+}
+
+#[test]
+fn a_live_donation_leaves_each_checkout_building_its_own_sources() {
+    if !have_cargo() {
+        return;
+    }
+    let sb = Sandbox::new();
+    let repo = sb.cargo_repo("A");
+    assert_eq!(sb.build_and_run(&repo), "A");
+    sb.ok(&sb.root, &["new", "live", "repos/gen"]);
+    let tree = sb.forest("live").join("gen");
+    fs::write(tree.join("data.txt"), "B").unwrap();
+    assert_eq!(sb.build_and_run(&tree), "B");
+    let built = meta(&tree.join("target/debug/gen")).modified().unwrap();
+    let before = stamps(&tree.join("target"));
+    let main = stamps(&repo.join("target"));
+
+    let out = sb.workforest_for_cargo(&["cache", "donate", "-f", "live"], &[]);
+
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(
+        stdout(&out).contains("  cache target: cloned debug to the seed: "),
+        "{}",
+        stdout(&out)
+    );
+    sb.ok(&sb.root, &["new", "next", "repos/gen"]);
+    let next = sb.forest("next").join("gen");
+    assert_eq!(sb.build_and_run(&next), "A");
+    assert!(
+        stamps(&tree.join("target")) == before,
+        "the next tree's build wrote through to the donor's cache"
+    );
+    assert!(
+        stamps(&repo.join("target")) == main,
+        "the main checkout's cache changed"
+    );
+    assert_eq!(sb.build_and_run(&tree), "B");
+    assert_eq!(
+        meta(&tree.join("target/debug/gen")).modified().unwrap(),
+        built,
+        "the tree had to rebuild after donating"
+    );
+}
+
+#[test]
+fn a_running_cargo_build_keeps_its_cache_out_of_the_seed() {
+    if !have_cargo() {
+        return;
+    }
+    let sb = Sandbox::new();
+    let repo = sb.repo("gen");
+    sb.publish_all(
+        &repo,
+        &[
+            (".gitignore", "/target\n/started\n/go\n"),
+            ("Cargo.toml", MANIFEST),
+            ("Cargo.lock", LOCKFILE),
+            ("build.rs", WAITING_BUILD_SCRIPT),
+            ("src/main.rs", "fn main() {}\n"),
+        ],
+    );
+    sb.ok(&sb.root, &["new", "busy", "repos/gen"]);
+    let tree = sb.forest("busy").join("gen");
+    let donate = ["cache", "donate", "-f", "busy", "--force"];
+
+    let build = sb.hold_build(&tree);
+    let out = sb.workforest_for_cargo(&donate, &[]);
+    build.finish();
+
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(
+        holds_cargo_lock(
+            &stdout(&out),
+            "in the tree, so its cache may be half written; left alone"
+        ),
+        "{}",
+        stdout(&out)
+    );
+    assert!(!sb.seed(&repo).join("target").exists());
+
+    let out = sb.workforest_for_cargo(&donate, &[]);
+    assert!(
+        stdout(&out).contains("  cache target: cloned to the seed: "),
+        "{}",
+        stdout(&out)
+    );
+
+    // A build in the main checkout keeps the seed from taking its newer
+    // cache, and a tree planted meanwhile grafts the seed's as it is.
+    let build = sb.hold_build(&repo);
+    let out = sb.workforest_for_cargo(&["new", "meanwhile", "repos/gen"], &[]);
+    build.finish();
+
+    assert!(
+        holds_cargo_lock(
+            &stdout(&out),
+            "in the main checkout, so the seed keeps what it has"
+        ),
+        "{}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("  cache target: grafted from the seed: "),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// Whether `report` says a build holds one of Cargo's build locks, and then
+/// `rest`: `.cargo-lock`, or one Cargo 1.98 added.
+fn holds_cargo_lock(report: &str, rest: &str) -> bool {
+    [".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock"]
+        .iter()
+        .any(|lock| {
+            report.contains(&format!(
+                "  cache target: a build holds debug/{lock} {rest}\n"
+            ))
+        })
+}
+
+#[test]
+fn profiles_and_target_triples_from_different_trees_build_the_next_trees_sources() {
+    if !have_cargo() {
+        return;
+    }
+    let sb = Sandbox::new();
+    let host = host_triple();
+    let run = |checkout: &Path, triple: Option<&str>| -> String {
+        let mut args = vec!["build"];
+        let mut binary = checkout.join("target");
+        if let Some(triple) = triple {
+            args.extend(["--target", triple]);
+            binary.push(triple);
+        }
+        sb.cargo(checkout, &args);
+        let out = Command::new(binary.join("debug/gen")).output().unwrap();
+        stdout(&out).trim().to_owned()
+    };
+    // The main checkout builds for its host, and for a target triple, as
+    // for a phone: build scripts for the host under `debug`, the rest under
+    // the triple's directory.
+    let repo = sb.cargo_repo("A");
+    assert_eq!(run(&repo, None), "A");
+    assert_eq!(run(&repo, Some(&host)), "A");
+    sb.ok(&sb.root, &["new", "desk", "repos/gen"]);
+    sb.ok(&sb.root, &["new", "phone", "repos/gen"]);
+    let (desk, phone) = (
+        sb.forest("desk").join("gen"),
+        sb.forest("phone").join("gen"),
+    );
+    fs::write(desk.join("data.txt"), "B").unwrap();
+    assert_eq!(run(&desk, None), "B");
+    push_work(&sb, &desk);
+    // The phone's build runs the host's build scripts too, after the desk's.
+    fs::write(phone.join("data.txt"), "C").unwrap();
+    assert_eq!(run(&phone, Some(&host)), "C");
+    push_work(&sb, &phone);
+    let main = stamps(&repo.join("target"));
+
+    let out = sb.workforest_for_cargo(&["burn", "desk"], &[]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    assert!(
+        stdout(&out).contains("  cache target: moved debug to the seed: "),
+        "{}",
+        stdout(&out)
+    );
+    let out = sb.workforest_for_cargo(&["burn", "phone"], &[]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let report = stdout(&out);
+    assert!(
+        report.contains(&format!("  cache target: moved {host} to the seed: ")),
+        "{report}"
+    );
+    assert!(
+        report.contains("; kept the seed's debug, changed since this tree grafted it"),
+        "{report}"
+    );
+
+    sb.ok(&sb.root, &["new", "next", "repos/gen"]);
+    let next = sb.forest("next").join("gen");
+    assert_eq!(run(&next, None), "A");
+    assert_eq!(run(&next, Some(&host)), "A");
+    assert!(
+        stamps(&repo.join("target")) == main,
+        "the main checkout's cache changed"
     );
 }

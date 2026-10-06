@@ -69,9 +69,9 @@ pub fn doctor(config: &Config, source: &Path, cmd: Option<&str>) -> Result<()> {
     );
     let mut grafted = Vec::new();
     for entry in clones {
-        match super::graft(&scratch.dir, source, entry, link_min, true) {
+        match super::graft_from_main(&scratch.dir, source, entry, link_min) {
             Ok(note) => {
-                println!("  cache {}: {}", entry.path, note.unwrap_or_default());
+                println!("  cache {}: {note}", entry.path);
                 if scratch.dir.join(&entry.path).is_dir() {
                     grafted.push(entry);
                 }

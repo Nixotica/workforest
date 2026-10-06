@@ -23,9 +23,11 @@ pub const CARGO: Ecosystem = Ecosystem {
     path: "target",
     always_copy: &[
         // A lock belongs to the inode, so a shared one makes builds in every
-        // tree wait for each other: Cargo's build lock, and rustc's
-        // incremental session locks.
+        // tree wait for each other: Cargo's build locks, `.cargo-lock` and,
+        // since Cargo 1.98 or so, `.cargo-build-lock` and
+        // `.cargo-artifact-lock`, and rustc's incremental session locks.
         ".cargo-lock",
+        ".cargo-*-lock",
         "*.lock",
         // Cargo's record of what is up to date. Shared, a build in one tree
         // makes another take its stale output for fresh.
@@ -68,4 +70,11 @@ pub const CARGO: Ecosystem = Ecosystem {
         "deps/*.o",
     ],
     build: "cargo build --all-targets && cargo doc",
+    // Each profile (`debug`, `release`) and each target triple
+    // (`aarch64-linux-android`) builds into a directory of its own, with its
+    // own lock and fingerprints. A cross build's build scripts and proc macros
+    // build for the host, under `debug`, but Cargo keys every unit's freshness
+    // on its dependencies' fingerprints and output times, so pairing one
+    // checkout's `debug` with another's triple can only cost rebuilds.
+    parts: true,
 };

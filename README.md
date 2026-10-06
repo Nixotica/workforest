@@ -139,9 +139,12 @@ unpack wherever they read skills from.
 | `workforest completions <shell>` | print the completion script for bash, zsh or fish |
 | `workforest shell-init <shell>` | print `wfcd`, a function that cds into a forest or one of its trees |
 | `workforest config` | each setting, its value, and where it comes from |
-| `workforest cache status [forest]` | per tree, how much of each build cache is still hardlinked to the main checkout |
+| `workforest cache status [forest]` | per tree, how much of each build cache is still hardlinked to other copies, and how old it is next to the seed's |
 | `workforest cache graft [tree...]` | graft build caches into trees already planted (`--force` replaces them) |
 | `workforest cache drop [tree...]` | delete trees' grafted build caches |
+| `workforest cache donate [tree...]` | give trees' build caches to their repos' seeds, where they are newer |
+| `workforest cache seeds` | list the repos' seeds, which trees graft from and donate to |
+| `workforest cache unseed <repo path>...` | delete repos' seeds, so the next tree seeds afresh from the main checkout |
 | `workforest cache paths <repo path>` | the build caches a repo declares, and where each is declared |
 | `workforest cache doctor <repo path>` | test that a repo's build caches are safe to graft |
 
@@ -161,7 +164,10 @@ itself is gone, as a stacked branch's base is after it merges and the stacked
 pull request is retargeted, the repo's default branch (`origin/HEAD`) stands in
 for it. A base that lives on, such as a release branch, never has a stand-in.
 They check the base as you last fetched it: fetch with `--prune` after merging,
-then burn. Run `workforest help <command>` for the details.
+then burn. Before removing a tree, they give its build caches to its repo's
+seed, so that trees planted later start warm (see [The seed](#the-seed));
+`--no-donate-cache` skips that. Run `workforest help <command>` for the
+details.
 
 Forests pile up, and `workforest fire` clears them all at once. It fetches the
 remotes the trees' bases are on, pruning deleted branches, then calls a tree
@@ -243,8 +249,9 @@ wfcd auth-migration api    # one of its trees
 ## Build caches
 
 A fresh tree has no build output, so its first build would start from cold.
-Instead, `new` and `plant` graft each repo's build cache from its main checkout
-into the tree. A repo declares its cache directories in `.workforest-cache` at
+Instead, `new` and `plant` graft each repo's build cache into the tree from the
+repo's seed, which starts as a copy of the main checkout's and takes back what
+trees build (see [The seed](#the-seed)). A repo declares its cache directories in `.workforest-cache` at
 its root, committed with it, or in `workforest-cache` in its git common dir
 (usually `.git/workforest-cache`), which is machine-local and overrides the
 committed file path by path:
@@ -257,7 +264,7 @@ build    clone   *.lock,state/*
 
 | mode | what each tree gets |
 | --- | --- |
-| `clone` (default) | the main checkout's directory, with files of 64 KiB and up hardlinked, costing no disk, and smaller files copied |
+| `clone` (default) | the seed's directory, with files of 64 KiB and up hardlinked, costing no disk, and smaller files copied |
 | `never` | nothing; the cache starts cold |
 
 Cargo's `target` needs no declaration: a repo with a `Cargo.toml` at its root
@@ -293,24 +300,78 @@ starts a comment anywhere on a line, so neither a path nor a glob can contain
 one. Copies keep their modification times, so a build tool still sees the
 tree's freshly checked-out sources as newer than the grafted output, and
 rebuilds what they changed. A tree planted earlier may have files older than
-the main checkout's last build, so `cache graft` marks those as changed,
-setting their modification time to now: otherwise the grafted output would
+the grafted output, so `cache graft` marks those as changed, in its submodules
+too, setting their modification time to now: otherwise the grafted output would
 pass as built from them.
 
-A grafted cache is a snapshot of the main checkout's when the tree was
-planted. A build replaces the large files it rebuilds rather than rewriting
-them, which is what `cache doctor` checks, so a build in either checkout breaks
-those files' hardlinks: the two drift apart without either changing the other;
-`workforest cache status` shows how much each tree still shares. The graft is
-only as warm as the main checkout's last build: one built long ago grafts
-fine, but leaves the tree more to rebuild.
+A grafted cache is a snapshot of the seed's when the tree was planted. A build
+replaces the large files it rebuilds rather than rewriting them, which is what
+`cache doctor` checks, so a build in any checkout breaks those files'
+hardlinks: the copies drift apart without changing each other; `workforest
+cache status` shows how much each tree still shares, and how old each tree's
+newest file is next to the seed's. The graft is only as warm as the last build
+that reached the seed: one built long ago grafts fine, but leaves the tree more
+to rebuild.
 
-workforest only grafts into, replaces or deletes a cache path that git ignores
-and tracks nothing under, so a mistaken declaration can't touch source. A cache
-whose main checkout is on another filesystem is left cold, since hardlinks
-can't cross filesystems. A graft is cloned beside the cache and moved into
-place, so an interrupted one never leaves half a cache behind, and `cache graft
---force` only gives up a tree's cache once it has a new one to put there.
+### The seed
+
+Trees don't graft straight from the main checkout: each repo has a seed, a copy
+of its caches under the forest root, at `.seeds/<repo>-<hash>`, that trees
+graft from and give their caches back to. The first tree planted of a repo
+establishes it from the main checkout's caches, hardlinking and copying as a
+graft does, and whenever the main checkout's have newer output than the
+seed's, the next plant has the seed take them first. workforest only ever
+reads the main checkout's caches and never writes to them, so a failed or
+interrupted workforest can't leave a main checkout with half a cache, or with
+output built from another branch's sources.
+
+`cut`, `burn` and `fire` donate each tree's caches to the seed before removing
+the tree, moving them there, which costs no disk, so that trees planted later
+start from the warmest cache any tree built. `workforest cache donate` clones a
+living tree's to the seed, the way a graft does, so that the tree keeps its
+own:
+
+```sh
+workforest burn fix-login --delete-branches     # donates, then burns
+workforest burn spike --no-donate-cache         # only burns
+workforest cache donate -f auth-migration       # every tree, or name some
+```
+
+A donation replaces the seed's cache with the tree's, which was grafted from it
+and built on, rather than merging the two, and only when that helps. A cache is
+left alone, with a line saying why, when nothing in it is newer than the
+seed's, or when the seed's changed since the tree grafted it, as when another
+tree donated first or the seed took the main checkout's newer output, which the
+donation would lose. Cargo's profiles and target triples, such as
+`target/debug` and `target/aarch64-linux-android`, are caches of their own, so
+a tree gives up only its newer ones, each in place of one still as the tree
+grafted it: one forest's desktop build and another's Android build both end up
+in the seed. `cache donate --force` donates the whole cache whatever its age.
+
+A cache that a build is still writing is never donated, as far as lock files
+can tell: a running build holds its cache's lock files, as Cargo holds
+`debug/.cargo-lock`, and workforest holds them in turn until the donation is
+done. A build tool that holds no lock file in its cache can't be seen. The
+same goes for the main checkout's caches: while a build there holds a lock, the
+seed keeps what it has. What a tree grafts may have been built from another
+branch's sources, but a graft marks the tree's files older than it as changed
+(see above), so a build in the tree never takes it for built from its own.
+
+`workforest cache seeds` lists the seeds, each with the main checkout it seeds,
+and `workforest cache unseed <repo>` deletes one, so that the next tree planted
+seeds afresh from the main checkout; `--gone` deletes those whose main checkout
+no longer exists. A seed costs the disk of its small files, which are copies,
+and of the large files no other checkout shares any more, as when the main
+checkout has rebuilt them since.
+
+workforest only grafts into, replaces or deletes a tree's cache path that git
+ignores and tracks nothing under, so a mistaken declaration can't touch source.
+Hardlinks can't cross filesystems, so a seed takes nothing from a main checkout
+on another filesystem than the forest root, and trees start cold until one
+donates. A graft is cloned beside the cache and moved into place, so an
+interrupted one never leaves half a cache behind, and `cache graft --force`
+only gives up a tree's cache once it has a new one to put there. The same goes
+for what the seed is given.
 
 Before trusting a `clone` entry, test it:
 
@@ -342,7 +403,7 @@ costs little disk either.
 
 ## JSON output
 
-`ls`, `status`, `cache status` and `fire` take `--json` and print one JSON
+`ls`, `status`, `cache status`, `cache seeds` and `fire` take `--json` and print one JSON
 object instead of their columns, for scripts and agents. Every object has a
 `schema` field, now `1`, which goes up only when a change would break a reader;
 new fields can appear without it. Paths are strings, and counts are `null` where
@@ -352,7 +413,8 @@ git couldn't tell.
 | --- | --- |
 | `ls [forest] --json` | `forest_root`, and `forests`: each with `name`, `path`, and `trees`: each with `repo`, `path`, `source` (its repo's main checkout), `branch`, `base` |
 | `status [forest] --json` | the forest's `name`, `path`, and `trees`: as for `ls`, plus `state` (`clean`, `dirty`, `landed`, `missing` or `unknown`), `ahead` and `behind` its base, and `unpushed`: how many commits ahead its upstream lacks, or `null` when that doesn't matter because nothing is ahead or it has landed |
-| `cache status [forest] --json` | the forest's `name`, `path`, and `trees`: as for `ls`, plus `missing`, and `caches`: each with `path`, `mode`, and `state`: `grafted` (with `files`, `shared_bytes` hardlinked to the main checkout and `own_bytes`), `cold`, `never`, or `blocked` (with `problem`) |
+| `cache status [forest] --json` | the forest's `name`, `path`, and `trees`: as for `ls`, plus `missing`, and `caches`: each with `path`, `mode`, and `state`: `grafted` (with `files`, `shared_bytes` hardlinked to other copies, `own_bytes`, and the modification times of the newest file in the tree's cache and in the seed's, `newest` and `seed_newest`, in seconds since the epoch or `null` for none), `cold`, `never`, or `blocked` (with `problem`) |
+| `cache seeds --json` | `seeds`: each with `path`, `source` (the main checkout it seeds, or `null` if unknown), `gone` (whether that main checkout no longer exists), and `caches`: each with `path`, `files`, `bytes`, and `newest`, the modification time of its newest file |
 | `fire --json` | `dry_run`, and `forests`, every one, in flight or not: each with `name`, `path`, `action` (`burn`, `cut` or `keep`), `trees` (each with `repo`, `verdict`: `dead`, `live` or `unknown`, `reason`, and `keeps_branch`), `strays` (checkouts its manifest doesn't record), and, with `--yes`, `done` and `error`. A forest that couldn't be read has only `name` and `error` |
 
 With `--json`, `fire --yes` prints nothing but the object; where to `cd`

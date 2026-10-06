@@ -4,29 +4,40 @@
 //! systems' are known without a declaration (see [`ecosystem`]). Each cache
 //! is grafted in one of two modes:
 //!
-//! - `clone`: the main checkout's directory is cloned into the tree, large files
-//!   hardlinked and small ones copied (see [`clone`]).
+//! - `clone`: the repo's seed is cloned into the tree, large files hardlinked
+//!   and small ones copied (see [`clone`]).
 //! - `never`: left cold.
 //!
-//! workforest only ever replaces or deletes a cache path that git ignores and
-//! tracks nothing under, so a mistaken declaration can't destroy source.
+//! A repo's seed (see [`seed`]) lives under the forest root, and takes the
+//! main checkout's caches when they have newer output. Trees donate theirs
+//! back to it (see [`donate`]), so that trees planted later graft a warm one.
+//! The main checkout's caches are only ever read.
+//!
+//! workforest only ever replaces or deletes a tree's cache path that git
+//! ignores and tracks nothing under, so a mistaken declaration can't destroy
+//! source.
 
 mod cargo;
 mod clone;
 pub mod declare;
 pub mod doctor;
+mod donate;
 mod ecosystem;
 mod glob;
+pub mod seed;
 mod walk;
 
 use std::fmt;
 use std::fs::{self, File, FileTimes};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+pub use clone::usage;
 pub use declare::declared;
+pub use donate::{Say, Transfer, donate_tree};
+use seed::{Record, Seed};
 
-use crate::error::{Context, Result, bail};
+use crate::error::{Context, Error, Result, bail};
 use crate::git;
 
 /// How a cache path is grafted into a tree.
@@ -69,6 +80,9 @@ pub struct Entry {
     pub origin: String,
     /// Whether the entry is built in (see [`ecosystem`]) rather than declared.
     pub built_in: bool,
+    /// Whether each top-level directory of the cache is a cache of its own,
+    /// so that a seed can take some of them and not others.
+    pub parts: bool,
 }
 
 /// Print each warning about a repo's declarations.
@@ -78,99 +92,192 @@ pub fn warn(warnings: &[String]) {
     }
 }
 
-/// Graft every cache that the repo with its main worktree at `source` declares
-/// into `tree`, printing a line for each. Files of `link_min` bytes and up are
-/// hardlinked. `force` replaces caches the tree already has. A cache that can't
-/// be grafted is left as it was, with a warning: the tree works without it.
-pub fn graft_tree(tree: &Path, source: &Path, link_min: u64, force: bool) {
-    let declared = declared(source);
-    warn(&declared.warnings);
-    for entry in &declared.entries {
-        match graft(tree, source, entry, link_min, force) {
-            Ok(Some(note)) => println!("  cache {}: {note}", entry.path),
-            Ok(None) => {}
-            Err(err) => eprintln!("workforest: cache {}: {err}", entry.path),
+/// A tree, and where its caches come from and go back to.
+pub struct Planting {
+    pub tree: PathBuf,
+    /// The main checkout of the tree's repo, whose caches are only ever read.
+    pub source: PathBuf,
+    /// The repo's seed (see [`seed`]).
+    pub seed: PathBuf,
+    /// Where the tree records what it grafted from the seed.
+    pub record: PathBuf,
+}
+
+impl Planting {
+    /// The tree `repo` of the forest at `forest`, planted from `source`, with
+    /// seeds under the forest root `root`.
+    pub fn new(root: &Path, forest: &Path, repo: &str, source: &Path) -> Planting {
+        Planting {
+            tree: forest.join(repo),
+            source: source.to_path_buf(),
+            seed: seed::dir(root, source),
+            record: forest.join(seed::RECORDS).join(repo),
         }
     }
 }
 
-/// Graft one cache into `tree`, returning what happened, if anything.
-fn graft(
-    tree: &Path,
-    source: &Path,
-    entry: &Entry,
-    link_min: u64,
-    force: bool,
-) -> Result<Option<String>> {
-    match entry.mode {
-        // Every repo of a build system gets its built-in entry, so the many
-        // without its cache, such as those that build elsewhere, pass quietly.
-        Mode::Clone if entry.built_in && !source.join(&entry.path).is_dir() => Ok(None),
-        Mode::Clone => graft_clone(tree, source, entry, link_min, force).map(Some),
-        Mode::Never => Ok(None),
+/// The seed `planting` grafts from and donates to, opened and locked the first
+/// time it is needed.
+fn open_seed<'a>(slot: &'a mut Option<Seed>, planting: &Planting) -> Result<&'a mut Seed> {
+    if slot.is_none() {
+        *slot = Some(Seed::open(&planting.seed, &planting.source)?);
+    }
+    Ok(slot.as_mut().expect("just opened"))
+}
+
+/// Graft every cache that the tree's repo declares into it from the repo's
+/// seed, printing a line for each, once the seed has taken whatever output of
+/// the main checkout's is newer than its own. Files of `link_min` bytes and up
+/// are hardlinked. `force` replaces caches the tree already has. A cache that
+/// can't be grafted is left as it was, with a warning: the tree works without
+/// it.
+pub fn graft_tree(planting: &Planting, link_min: u64, force: bool) {
+    let declared = declared(&planting.source);
+    warn(&declared.warnings);
+    let mut record = Record::read(&planting.record);
+    let mut seed = None;
+    for entry in &declared.entries {
+        match graft(planting, &mut seed, &mut record, entry, link_min, force) {
+            Ok(notes) => {
+                for note in notes {
+                    println!("  cache {}: {note}", entry.path);
+                }
+            }
+            Err(err) => eprintln!("workforest: cache {}: {err}", entry.path),
+        }
+    }
+    if let Err(err) = record.write() {
+        eprintln!("workforest: {err}");
     }
 }
 
-fn graft_clone(
-    tree: &Path,
-    source: &Path,
+/// Graft one cache into the tree, returning what happened, if anything.
+fn graft(
+    planting: &Planting,
+    seed: &mut Option<Seed>,
+    record: &mut Record,
     entry: &Entry,
     link_min: u64,
     force: bool,
-) -> Result<String> {
-    let (src, dst) = (source.join(&entry.path), tree.join(&entry.path));
-    check_replaceable(tree, &entry.path, true)?;
+) -> Result<Vec<String>> {
+    if entry.mode == Mode::Never {
+        return Ok(Vec::new());
+    }
+    let main = planting.source.join(&entry.path);
+    let seeded = planting.seed.join(&entry.path);
+    // Every repo of a build system gets its built-in entry, so the many
+    // without its cache, such as those that build elsewhere, pass quietly.
+    if entry.built_in && !main.is_dir() && !seeded.is_dir() {
+        return Ok(Vec::new());
+    }
+    check_replaceable(&planting.tree, &entry.path, true)?;
+    let dst = planting.tree.join(&entry.path);
     let replacing = dst.symlink_metadata().is_ok();
     if replacing && !force {
-        return Ok("already there, left alone".to_owned());
+        return Ok(vec!["already there, left alone".to_owned()]);
     }
-    // Make sure there is something to graft before giving up what the tree has.
     let kept = if replacing {
         "the tree keeps its own"
     } else {
         "starting cold"
     };
-    if !src.is_dir() {
-        return Ok(format!("the main checkout has none; {kept}"));
+    if !main.is_dir() && !seeded.is_dir() {
+        return Ok(vec![format!("the main checkout has none; {kept}")]);
     }
-    let parent = dst.parent().unwrap_or(tree);
+    let seed = open_seed(seed, planting)?;
+    let mut notes = Vec::new();
+    if main.is_dir() {
+        match donate::take_from_main(seed, &planting.source, entry, link_min) {
+            Ok(note) => notes.extend(note),
+            Err(err) => eprintln!(
+                "workforest: cache {}: the seed could not take the main checkout's: {err}",
+                entry.path
+            ),
+        }
+    }
+    if !seeded.is_dir() {
+        notes.push(format!("the seed has none; {kept}"));
+        return Ok(notes);
+    }
+    let parent = dst.parent().unwrap_or(&planting.tree);
+    fs::create_dir_all(parent).context(format!("could not create {}", parent.display()))?;
+    if !clone::same_filesystem(&seeded, parent) {
+        notes.push(format!(
+            "the seed is on another filesystem, so it can't be hardlinked; {kept}"
+        ));
+        return Ok(notes);
+    }
+    let grafted = graft_clone(&planting.tree, &seeded, &planting.source, entry, link_min)?;
+    notes.push(format!("grafted from the seed: {grafted}"));
+    record.set(&entry.path, seed.parts(&entry.path, entry.parts));
+    Ok(notes)
+}
+
+/// Graft the cache `entry` declares straight from the main checkout at
+/// `source` into `tree`, replacing any the tree has, as `cache doctor` does to
+/// test what a build in the tree writes through to the main checkout.
+fn graft_from_main(tree: &Path, source: &Path, entry: &Entry, link_min: u64) -> Result<String> {
+    let src = source.join(&entry.path);
+    check_replaceable(tree, &entry.path, true)?;
+    if !src.is_dir() {
+        return Ok("the main checkout has none".to_owned());
+    }
+    let parent = tree.join(&entry.path);
+    let parent = parent.parent().unwrap_or(tree);
     fs::create_dir_all(parent).context(format!("could not create {}", parent.display()))?;
     if !clone::same_filesystem(&src, parent) {
         return Ok(format!(
-            "{} is on another filesystem, so it can't be hardlinked; {kept}",
+            "{} is on another filesystem, so it can't be hardlinked",
             src.display()
         ));
     }
+    let grafted = graft_clone(tree, &src, source, entry, link_min)?;
+    Ok(format!("grafted from the main checkout: {grafted}"))
+}
+
+/// Clone the cache at `src` into `tree` at the path `entry` declares, in place
+/// of whatever the tree has there, returning what it cost. `main` is the main
+/// checkout, whose symlinks into it are counted.
+fn graft_clone(
+    tree: &Path,
+    src: &Path,
+    main: &Path,
+    entry: &Entry,
+    link_min: u64,
+) -> Result<String> {
+    let dst = tree.join(&entry.path);
     // Clone beside the cache and move it into place, so that an interrupted
     // graft never leaves a partial cache that looks whole.
-    let staging = staging_path(&entry.path);
+    let staging = staging_path(&entry.path, "workforest-graft");
     discard_staging(tree, &staging)?;
     let staged = tree.join(&staging);
-    let grafted = clone::clone_dir(&src, &staged, source, link_min, &entry.always_copy)
+    let grafted = clone::clone_dir(src, &staged, main, link_min, &entry.always_copy)
         .context(format!("could not clone {}", src.display()))
         .and_then(|cloned| {
-            if replacing {
+            // Before the graft is in place, so that one cut short never leaves
+            // output that passes as built from the tree's files. A tree
+            // planted just now is newer than anything grafted into it, but
+            // one planted or edited before the cache's last build is not.
+            let marked = match cloned.newest {
+                Some(newest) => mark_older_changed(tree, newest, &staging).map_err(|err| {
+                    Error::new(format!(
+                        "{err}; dropped the graft, so that its output can't pass as fresh"
+                    ))
+                })?,
+                None => 0,
+            };
+            if dst.symlink_metadata().is_ok() {
                 remove(tree, &entry.path)?;
             }
             fs::rename(&staged, &dst).context(format!("could not move it to {}", dst.display()))?;
-            Ok(cloned)
+            Ok((cloned, marked))
         });
     if grafted.is_err() {
         let _ = fs::remove_dir_all(&staged);
     }
-    let cloned = grafted?;
-    // A tree planted just now is newer than anything grafted into it, but one
-    // planted or edited before the main checkout's last build is not.
-    let marked = match cloned.newest.map(|newest| mark_older_changed(tree, newest)) {
-        None => 0,
-        Some(Ok(marked)) => marked,
-        Some(Err(err)) => {
-            let _ = remove(tree, &entry.path);
-            bail!("{err}; dropped the graft, so that its output can't pass as fresh");
-        }
-    };
+    let (cloned, marked) = grafted?;
     let mut note = format!(
-        "grafted from the main checkout: {}, {} hardlinked, {} copied",
+        "{}, {} hardlinked, {} copied",
         count(cloned.files, "file"),
         human_bytes(cloned.linked),
         human_bytes(cloned.copied)
@@ -191,17 +298,22 @@ fn graft_clone(
 }
 
 /// Mark as changed now each file of the tree at `tree` that git tracks or
-/// would track and that is no newer than `newest`, returning how many. Build
-/// tools take output newer than its sources for built from them, so output
-/// grafted from a build that came after the tree's checkout or edits would
-/// otherwise pass as fresh, though built from the main checkout's sources.
-fn mark_older_changed(tree: &Path, newest: SystemTime) -> Result<u64> {
+/// would track, in its submodules too, and that is no newer than `newest`,
+/// returning how many. Build tools take output newer than its sources for
+/// built from them, so output grafted from a build that came after the tree's
+/// checkout or edits would otherwise pass as fresh, though built from another
+/// checkout's sources. What is under `staged`, the graft on its way into
+/// place, is left alone: its files are hardlinked to other copies.
+fn mark_older_changed(tree: &Path, newest: SystemTime, staged: &str) -> Result<u64> {
     let Some(files) = git::files(tree) else {
         bail!("could not list the files of {}", tree.display());
     };
     let now = FileTimes::new().set_modified(SystemTime::now());
     let mut marked = 0;
     for file in files {
+        if file.starts_with(staged) {
+            continue;
+        }
         let path = tree.join(file);
         // Only regular files: a symlink's target may be outside the tree, and
         // a tracked file may have been deleted.
@@ -220,12 +332,13 @@ fn mark_older_changed(tree: &Path, newest: SystemTime) -> Result<u64> {
     Ok(marked)
 }
 
-/// Where the cache at `path` is cloned before it is moved into place: beside
-/// it, so on the same filesystem, under a name that is workforest's own.
-fn staging_path(path: &str) -> String {
+/// Where the cache at `path` is staged for `purpose`, such as being cloned
+/// before it is moved into place: beside it, so on the same filesystem, under
+/// a name that is workforest's own.
+fn staging_path(path: &str, purpose: &str) -> String {
     match path.rsplit_once('/') {
-        Some((dir, name)) => format!("{dir}/.{name}.workforest-graft"),
-        None => format!(".{path}.workforest-graft"),
+        Some((dir, name)) => format!("{dir}/.{name}.{purpose}"),
+        None => format!(".{path}.{purpose}"),
     }
 }
 
@@ -281,19 +394,54 @@ fn check_replaceable(tree: &Path, path: &str, dir: bool) -> Result<()> {
 }
 
 /// What the tree at `tree` has of the cache `entry` declares: how much of it
-/// is still hardlinked to the main checkout, or why there's nothing to count.
-pub fn describe(tree: &Path, entry: &Entry) -> String {
+/// is still hardlinked to another copy, and how its newest file's age compares
+/// with the seed at `seed`'s, or why there's nothing to count.
+pub fn describe(tree: &Path, seed: &Path, entry: &Entry) -> String {
     match state(tree, entry) {
         CacheState::Never => "never".to_owned(),
         CacheState::Cold => "cold".to_owned(),
         CacheState::Blocked(problem) => problem,
-        CacheState::Grafted(usage) => format!(
-            "{}, {} hardlinked, {} own",
-            count(usage.files, "file"),
-            human_bytes(usage.shared),
-            human_bytes(usage.own)
-        ),
+        CacheState::Grafted(usage) => {
+            let mut shown = format!(
+                "{}, {} hardlinked, {} own",
+                count(usage.files, "file"),
+                human_bytes(usage.shared),
+                human_bytes(usage.own)
+            );
+            if let Some(ours) = usage.newest {
+                let seeded = match newest(&seed.join(&entry.path)) {
+                    Some(seeded) => format!("the seed's: {} old", age(seeded)),
+                    None => "the seed has none".to_owned(),
+                };
+                shown.push_str(&format!(", newest {} old ({seeded})", age(ours)));
+            }
+            shown
+        }
     }
+}
+
+/// How many files a copy of a cache holds, how many bytes, and how old its
+/// newest file is.
+pub fn describe_usage(usage: &clone::Usage) -> String {
+    let mut shown = format!(
+        "{}, {}",
+        count(usage.files, "file"),
+        human_bytes(usage.shared + usage.own)
+    );
+    if let Some(newest) = usage.newest {
+        shown.push_str(&format!(", newest {} old", age(newest)));
+    }
+    shown
+}
+
+/// The modification time of the newest file in the cache at `dir`, if it
+/// holds any. Unreadable parts are left out.
+pub fn newest(dir: &Path) -> Option<SystemTime> {
+    walk::walk(dir)
+        .flatten()
+        .filter(|(_, meta)| meta.is_file())
+        .filter_map(|(_, meta)| meta.modified().ok())
+        .max()
 }
 
 /// Where a tree's cache stands.
@@ -304,7 +452,7 @@ pub enum CacheState {
     Cold,
     /// workforest won't touch it, for the reason given.
     Blocked(String),
-    /// It has one, sharing this much with the main checkout.
+    /// It has one, sharing this much with other copies.
     Grafted(clone::Usage),
 }
 
@@ -326,6 +474,20 @@ fn count(n: u64, noun: &str) -> String {
         format!("1 {noun}")
     } else {
         format!("{n} {noun}s")
+    }
+}
+
+/// How long ago `time` was, roughly, in the largest unit that keeps it at 1 or
+/// more: `12 s`, `5 min`, `3 h`, `58 days`. A time in the future is `0 s`.
+fn age(time: SystemTime) -> String {
+    let secs = SystemTime::now()
+        .duration_since(time)
+        .map_or(0, |ago| ago.as_secs());
+    match secs {
+        0..60 => format!("{secs} s"),
+        60..3600 => format!("{} min", secs / 60),
+        3600..86400 => format!("{} h", secs / 3600),
+        _ => count(secs / 86400, "day"),
     }
 }
 

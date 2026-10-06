@@ -266,21 +266,16 @@ pub fn tracks(dir: &Path, path: &str) -> bool {
     output(dir, ["ls-files", "--", &pathspec]).is_none_or(|files| !files.is_empty())
 }
 
-/// The files of the worktree at `dir` that git tracks, or would track if
-/// added: those it doesn't ignore. Paths are relative to `dir`.
+/// The files of the worktree at `dir` that git tracks, in its checked-out
+/// submodules too, or would track if added: those it doesn't ignore. Paths are
+/// relative to `dir`.
 pub fn files(dir: &Path) -> Option<Vec<PathBuf>> {
-    let list = stdout(
-        dir,
-        [
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ],
-    )?;
-    let files = list
+    // git can't list the files of submodules and untracked ones at once.
+    let tracked = stdout(dir, ["ls-files", "-z", "--cached", "--recurse-submodules"])?;
+    let untracked = stdout(dir, ["ls-files", "-z", "--others", "--exclude-standard"])?;
+    let files = tracked
         .split(|&byte| byte == 0)
+        .chain(untracked.split(|&byte| byte == 0))
         .filter(|path| !path.is_empty())
         .map(|path| PathBuf::from(OsStr::from_bytes(path)))
         .collect();

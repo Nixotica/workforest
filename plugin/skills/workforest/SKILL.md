@@ -27,7 +27,7 @@ store, so no history is copied.
 
 ## Before first use
 
-This skill drives the `workforest` command-line tool, version 0.13.0 or later.
+This skill drives the `workforest` command-line tool, version 0.16.0 or later.
 Check that it is installed:
 
 ```sh
@@ -103,7 +103,7 @@ forest you're standing in.
 | `workforest exec [-f <forest>] [--parallel [N]] -- <command>...` | run a command in every tree |
 | `workforest setup --repos <dir>...` | say where repos live, so that they can be named |
 | `workforest config` | each setting, its value, and where it comes from |
-| `workforest cache <sub>` | build caches: `status`, `graft`, `drop`, `paths`, `doctor` |
+| `workforest cache <sub>` | build caches: `status`, `graft`, `drop`, `donate`, `seeds`, `unseed`, `paths`, `doctor` |
 
 Aliases: `add`=`plant`, `remove`=`cut`, `rm`/`delete`=`burn`,
 `list`=`ls`, `st`=`status`, `dir`=`path`.
@@ -132,11 +132,13 @@ Options:
 - `--scorch` — on `fire`, also cut dead trees out of forests that still have
   live ones.
 - `--no-fetch` — on `fire`, judge the bases as last fetched.
-- `--json` — on `ls`, `status`, `cache status` and `fire`, print one JSON object
+- `--json` — on `ls`, `status`, `cache status`, `cache seeds` and `fire`, print one JSON object
   instead of columns. Whenever you read these commands' output to decide what
   to do, pass `--json` rather than parsing columns; the fields are listed under
   "JSON output" in the README.
 - `--no-cache` — on `new`/`plant`, don't graft the repos' build caches.
+- `--no-donate-cache` — on `cut`/`burn`/`fire`, don't first give each tree's
+  build caches to its repo's seed (see "Build caches").
 - `--sparse <dir>...` — on `new`/`plant`, check out only those directories of
   each repo, plus its top-level files. For a large repo where the work touches
   a few directories; the main checkout and other trees stay whole. Put it after
@@ -180,8 +182,8 @@ workforest burn auth-migration --delete-branches
 
 ## Build caches
 
-`new` and `plant` graft each repo's build cache from its main checkout into
-the tree, so a new tree doesn't build from cold. A repo declares its caches in
+`new` and `plant` graft each repo's build cache into the tree from the repo's
+seed, so a new tree doesn't build from cold. A repo declares its caches in
 `.workforest-cache` at its root (committed) or `workforest-cache` in its git
 common dir (machine-local, and overrides the committed file path by path):
 
@@ -193,7 +195,7 @@ build    clone   *.lock,state/*
 
 | mode | meaning |
 | --- | --- |
-| `clone` | the main checkout's directory, files of 64 KiB and up hardlinked, smaller ones copied — the default |
+| `clone` | the seed's directory, files of 64 KiB and up hardlinked, smaller ones copied — the default |
 | `never` | left cold |
 
 Cargo's `target/` needs no entry: a repo with a root `Cargo.toml` grafts it,
@@ -207,17 +209,35 @@ caches of downloaded packages, so a tree's install is fast, but its
 The size split is a bet, not a guarantee. Build tools replace large artifacts
 wholesale, so sharing them is free; the files they rewrite in place
 (fingerprints, dep-info, timestamps, locks) are usually small and get private
-copies. A large file that is rewritten in place reaches the main checkout
-through its hardlink, so it needs an always-copy glob. Never point two trees at
+copies. A large file that is rewritten in place reaches every copy that shares
+it, the main checkout's among them, so it needs an always-copy glob. Never point two trees at
 one build directory instead (a shared output dir): trees on different branches
 then build over each other's output.
 
-A graft is a snapshot of the main checkout's cache, only as warm as its last
-build. Builds in the tree replace what they rebuild, so the tree drifts away
-from the main checkout without changing it. `cache graft` into a tree planted
-earlier sets the modification time of the tree's files older than the graft to
-now, so that its output can't pass as built from them. `workforest cache
-status` shows how much each tree still shares. workforest only touches cache paths that git
+A repo's seed is a copy of its caches under the forest root
+(`.seeds/<repo>-<hash>`). The first tree planted establishes it from the main
+checkout's caches, and a plant has it take the main checkout's again whenever
+they have newer output. workforest only ever reads a main checkout's caches;
+it never writes to them. `cut`, `burn` and `fire` give each tree's caches to
+the seed before removing it, moving them, which costs no disk, so that the next
+tree of the repo starts from the warmest cache any tree built; `--no-donate-cache`
+skips that, and `workforest cache donate` clones a living tree's to the seed.
+A donation replaces the seed's cache, and only goes ahead when the tree's has
+newer output and the seed's hasn't changed since the tree grafted it, as it has
+when another tree donated first; Cargo's profiles and target triples
+(`target/debug`, `target/aarch64-linux-android`) are donated one by one. It
+never takes a cache that a running build holds a lock in. `cache donate
+--force` donates whatever the ages. `workforest cache seeds` lists the seeds,
+and `workforest cache unseed <repo>` deletes one, so the next tree seeds
+afresh from the main checkout.
+
+A graft is a snapshot of the seed, only as warm as the last build that reached
+it. Builds in the tree replace what they rebuild, so the tree drifts away
+without changing other copies. A graft sets the modification time of the
+tree's files older than the grafted output to now, submodules' too, so that
+output built from another branch can't pass as built from them. `workforest
+cache status` shows how much each tree still shares, and how old its newest
+file is next to the seed's. workforest only touches cache paths that git
 ignores, and leaves a cache cold across filesystems.
 
 ### Earning a new entry
@@ -263,6 +283,9 @@ gone, then burn:
 workforest exec -f <forest> -- git fetch --quiet --prune
 workforest burn <forest> --delete-branches
 ```
+
+`burn` gives the trees' build caches to their repos' seeds first, so that the
+next forest of each repo grafts them; it skips whatever wouldn't help.
 
 A refusal after fetching means some of the work is not on the base: commits
 made after the merge, a merge that took only part of the branch, or a merge

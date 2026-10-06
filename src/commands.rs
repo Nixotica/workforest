@@ -3,15 +3,16 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use clap::CommandFactory;
 use serde_json::{Value, json};
 
 use crate::cache;
 use crate::cli::{
-    Branching, BurnArgs, CacheCommand, CacheDoctorArgs, CacheDropArgs, CacheGraftArgs,
-    CachePathsArgs, Caching, Cli, Command, CutArgs, FireArgs, ForestArg, LsArgs, NewArgs,
-    PlantArgs, Removal, ReportArgs, SetupArgs,
+    Branching, BurnArgs, CacheCommand, CacheDoctorArgs, CacheDonateArgs, CacheDropArgs,
+    CacheGraftArgs, CachePathsArgs, Caching, Cli, Command, CutArgs, FireArgs, ForestArg, LsArgs,
+    NewArgs, PlantArgs, Removal, ReportArgs, SeedsArgs, SetupArgs, UnseedArgs,
 };
 use crate::complete;
 use crate::config::{self, Config};
@@ -61,6 +62,9 @@ pub fn run(cli: Cli) -> Result<()> {
                 CacheCommand::Status(args) => cache_status(&config, args)?,
                 CacheCommand::Graft(args) => cache_graft(&config, args)?,
                 CacheCommand::Drop(args) => cache_drop(&config, args)?,
+                CacheCommand::Donate(args) => cache_donate(&config, args)?,
+                CacheCommand::Seeds(args) => cache_seeds(&config, args)?,
+                CacheCommand::Unseed(args) => cache_unseed(&config, args)?,
                 CacheCommand::Paths(args) => cache_paths(&config, args)?,
                 CacheCommand::Doctor(args) => cache_doctor(&config, args)?,
             }
@@ -78,7 +82,14 @@ fn new(config: &Config, args: NewArgs) -> Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
-    plant_sources(&forest, sources, args.branching, &args.sparse.sparse, graft)
+    plant_sources(
+        config,
+        &forest,
+        sources,
+        args.branching,
+        &args.sparse.sparse,
+        graft,
+    )
 }
 
 fn plant(config: &Config, args: PlantArgs) -> Result<()> {
@@ -86,7 +97,14 @@ fn plant(config: &Config, args: PlantArgs) -> Result<()> {
     let sources = main_worktrees(config, &args.repos)?;
     check_sparse(&args.sparse.sparse)?;
     let graft = grafting(config, &args.caching)?;
-    plant_sources(&forest, sources, args.branching, &args.sparse.sparse, graft)
+    plant_sources(
+        config,
+        &forest,
+        sources,
+        args.branching,
+        &args.sparse.sparse,
+        graft,
+    )
 }
 
 /// `--sparse` takes directories inside the repo: relative, and not leaving it.
@@ -123,9 +141,10 @@ fn main_worktree(config: &Config, arg: &str) -> Result<PathBuf> {
 }
 
 /// Add a worktree of each repo to `forest`, all on the same branch. Unless
-/// `graft` is `None`, graft the build caches each repo declares, hardlinking
-/// files of that many bytes and up.
+/// `graft` is `None`, graft the build caches each repo declares from its seed,
+/// hardlinking files of that many bytes and up.
 fn plant_sources(
+    config: &Config,
     forest: &Forest,
     sources: Vec<PathBuf>,
     branching: Branching,
@@ -160,7 +179,7 @@ fn plant_sources(
             dir.display()
         );
         if let Some(link_min) = graft {
-            cache::graft_tree(&dir, &source, link_min, false);
+            cache::graft_tree(&planting(config, forest, &repo, &source), link_min, false);
         }
     }
     Ok(())
@@ -178,17 +197,23 @@ fn cut(config: &Config, args: CutArgs) -> Result<()> {
         {
             bail!("{repo} has {risk}; commit/push it or re-run with --force");
         }
-        cut_tree(&forest, &tree, &args.removal, false)?;
+        cut_tree(config, &forest, &tree, &args.removal, false)?;
     }
     Ok(())
 }
 
 /// Remove one tree from `forest`, saying so unless `quiet`, and saying where to
 /// go if the shell was in it.
-fn cut_tree(forest: &Forest, tree: &Tree, removal: &Removal, quiet: bool) -> Result<()> {
+fn cut_tree(
+    config: &Config,
+    forest: &Forest,
+    tree: &Tree,
+    removal: &Removal,
+    quiet: bool,
+) -> Result<()> {
     let dir = forest.tree_dir(&tree.repo);
     let standing_in_it = cwd_is_within(&dir);
-    remove_tree(forest, tree, removal)?;
+    remove_tree(config, forest, tree, removal, quiet)?;
     if !quiet {
         println!("cut {} from {}", tree.repo, forest.name);
     }
@@ -243,7 +268,7 @@ fn burn_forest(
             .map_or_else(|| config.forest_root.clone(), |tree| tree.source.clone())
     });
     for (tree, removal) in trees {
-        remove_tree(forest, tree, removal)?;
+        remove_tree(config, forest, tree, removal, quiet)?;
     }
     fs::remove_dir_all(&forest.dir)
         .context(format!("could not remove {}", forest.dir.display()))?;
@@ -265,10 +290,28 @@ fn point_out_of(gone: &Path, way_out: &Path) {
     );
 }
 
-/// Remove one tree's worktree, and its branch if asked, then forget it. A tree
-/// whose directory and repo are both gone only needs forgetting.
-fn remove_tree(forest: &Forest, tree: &Tree, removal: &Removal) -> Result<()> {
+/// Remove one tree's worktree, donating its caches to its repo's seed unless
+/// told not to, and deleting its branch if asked, then forget it. A tree
+/// whose directory and repo are both gone only needs forgetting. `quiet` says
+/// nothing of the donation but errors.
+fn remove_tree(
+    config: &Config,
+    forest: &Forest,
+    tree: &Tree,
+    removal: &Removal,
+    quiet: bool,
+) -> Result<()> {
     let dir = forest.tree_dir(&tree.repo);
+    let planting = planting(config, forest, &tree.repo, &tree.source);
+    if !removal.no_donate_cache && dir.is_dir() && tree.source.is_dir() {
+        let header = format!("{}: donating caches", tree.repo);
+        let say = if quiet {
+            cache::Say::Nothing
+        } else {
+            cache::Say::Notable
+        };
+        cache::donate_tree(&planting, cache::Transfer::Move, false, say, Some(&header));
+    }
     if dir.is_dir() {
         git::remove_worktree(&tree.source, &dir, removal.force)?;
     } else if tree.source.is_dir() {
@@ -285,7 +328,21 @@ fn remove_tree(forest: &Forest, tree: &Tree, removal: &Removal) -> Result<()> {
             tree.branch, tree.repo
         );
     }
+    if let Err(err) = fs::remove_file(&planting.record)
+        && err.kind() != io::ErrorKind::NotFound
+    {
+        eprintln!(
+            "workforest: could not remove {}: {err}",
+            planting.record.display()
+        );
+    }
     forest.forget(&tree.repo)
+}
+
+/// What `cache` needs to know of the tree `repo` of `forest`, planted from
+/// `source`.
+fn planting(config: &Config, forest: &Forest, repo: &str, source: &Path) -> cache::Planting {
+    cache::Planting::new(&config.forest_root, &forest.dir, repo, source)
 }
 
 fn ls(config: &Config, args: LsArgs) -> Result<()> {
@@ -498,6 +555,14 @@ fn path_json(path: &Path) -> Value {
     json!(path.to_string_lossy())
 }
 
+/// A time as JSON: whole seconds since the epoch, or `null` for none.
+fn time_json(time: Option<SystemTime>) -> Value {
+    json!(
+        time.and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|since| since.as_secs())
+    )
+}
+
 /// What the manifest records about `tree`, as JSON.
 fn tree_json(forest: &Forest, tree: &Tree) -> Value {
     json!({
@@ -569,6 +634,7 @@ fn fire(config: &Config, args: FireArgs) -> Result<()> {
                 let removal = Removal {
                     force: false,
                     delete_branches: delete_branch,
+                    no_donate_cache: args.no_donate_cache,
                 };
                 removals.push((tree.clone(), removal));
             }
@@ -604,7 +670,7 @@ fn fire(config: &Config, args: FireArgs) -> Result<()> {
                 burn_forest(config, &judgement.forest, &removals, json)
             } else {
                 removals.iter().try_for_each(|(tree, removal)| {
-                    cut_tree(&judgement.forest, tree, removal, json)
+                    cut_tree(config, &judgement.forest, tree, removal, json)
                 })
             };
             if let Err(err) = &outcome {
@@ -750,6 +816,7 @@ fn cache_status(config: &Config, args: ReportArgs) -> Result<()> {
         }
         let declared = cache::declared(&tree.source);
         cache::warn(&declared.warnings);
+        let seed = cache::seed::dir(&config.forest_root, &tree.source);
         if !json {
             if declared.entries.is_empty() {
                 println!("  {:<24} no caches declared", tree.repo);
@@ -760,7 +827,11 @@ fn cache_status(config: &Config, args: ReportArgs) -> Result<()> {
         let mut caches = Vec::new();
         for entry in &declared.entries {
             if !json {
-                println!("    {:<22} {}", entry.path, cache::describe(&dir, entry));
+                println!(
+                    "    {:<22} {}",
+                    entry.path,
+                    cache::describe(&dir, &seed, entry)
+                );
                 continue;
             }
             let mut cache = json!({"path": entry.path, "mode": entry.mode.to_string()});
@@ -776,6 +847,8 @@ fn cache_status(config: &Config, args: ReportArgs) -> Result<()> {
                     cache["files"] = json!(usage.files);
                     cache["shared_bytes"] = json!(usage.shared);
                     cache["own_bytes"] = json!(usage.own);
+                    cache["newest"] = time_json(usage.newest);
+                    cache["seed_newest"] = time_json(cache::newest(&seed.join(&entry.path)));
                 }
             }
             caches.push(cache);
@@ -804,7 +877,95 @@ fn cache_graft(config: &Config, args: CacheGraftArgs) -> Result<()> {
             continue;
         }
         println!("{}", tree.repo);
-        cache::graft_tree(&dir, &tree.source, link_min, args.force);
+        let planting = planting(config, &forest, &tree.repo, &tree.source);
+        cache::graft_tree(&planting, link_min, args.force);
+    }
+    Ok(())
+}
+
+fn cache_donate(config: &Config, args: CacheDonateArgs) -> Result<()> {
+    let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
+    let link_min = config.link_min()?.value;
+    for tree in selected_trees(&forest, &args.trees)? {
+        let dir = forest.tree_dir(&tree.repo);
+        if !dir.is_dir() {
+            println!("{}: MISSING", tree.repo);
+            continue;
+        }
+        println!("{}", tree.repo);
+        let planting = planting(config, &forest, &tree.repo, &tree.source);
+        let transfer = cache::Transfer::Clone { link_min };
+        cache::donate_tree(&planting, transfer, args.force, cache::Say::All, None);
+    }
+    Ok(())
+}
+
+fn cache_seeds(config: &Config, args: SeedsArgs) -> Result<()> {
+    let json = args.output.json;
+    let seeds = cache::seed::all(&config.forest_root)?;
+    if !json && seeds.is_empty() {
+        println!(
+            "no seeds yet ({})",
+            config.forest_root.join(cache::seed::SEEDS).display()
+        );
+    }
+    let mut listed = Vec::new();
+    for (dir, meta) in &seeds {
+        let source = meta.source.as_deref();
+        let gone = source.is_none_or(|source| !source.is_dir());
+        if !json {
+            let source =
+                source.map_or_else(|| "?".to_owned(), |source| source.display().to_string());
+            let gone = if gone { " (gone)" } else { "" };
+            println!("{}  {source}{gone}", dir_name(dir));
+        }
+        let mut caches = Vec::new();
+        for path in meta.caches() {
+            let usage = cache::usage(&dir.join(path));
+            if !json {
+                println!("  {:<22} {}", path, cache::describe_usage(&usage));
+                continue;
+            }
+            caches.push(json!({
+                "path": path,
+                "files": usage.files,
+                "bytes": usage.shared + usage.own,
+                "newest": time_json(usage.newest),
+            }));
+        }
+        listed.push(json!({
+            "path": path_json(dir),
+            "source": source.map(path_json),
+            "gone": gone,
+            "caches": caches,
+        }));
+    }
+    if json {
+        print_json(json!({"seeds": listed}));
+    }
+    Ok(())
+}
+
+fn cache_unseed(config: &Config, args: UnseedArgs) -> Result<()> {
+    let mut dirs = Vec::new();
+    for arg in &args.repos {
+        let source = main_worktree(config, arg)?;
+        let dir = cache::seed::dir(&config.forest_root, &source);
+        if !dir.is_dir() {
+            bail!("{} has no seed", source.display());
+        }
+        dirs.push(dir);
+    }
+    if args.gone {
+        for (dir, meta) in cache::seed::all(&config.forest_root)? {
+            if meta.source.as_deref().is_none_or(|source| !source.is_dir()) {
+                dirs.push(dir);
+            }
+        }
+    }
+    for dir in dirs {
+        cache::seed::remove(&dir)?;
+        println!("removed seed {}", dir.display());
     }
     Ok(())
 }
@@ -813,6 +974,8 @@ fn cache_drop(config: &Config, args: CacheDropArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
     for tree in selected_trees(&forest, &args.trees)? {
         let dir = forest.tree_dir(&tree.repo);
+        let planting = planting(config, &forest, &tree.repo, &tree.source);
+        let mut record = cache::seed::Record::read(&planting.record);
         let declared = cache::declared(&tree.source);
         cache::warn(&declared.warnings);
         for entry in &declared.entries {
@@ -821,9 +984,16 @@ fn cache_drop(config: &Config, args: CacheDropArgs) -> Result<()> {
                 continue;
             }
             match cache::remove(&dir, &entry.path) {
-                Ok(()) => println!("dropped {}/{}", tree.repo, entry.path),
+                Ok(()) => {
+                    // What the tree builds next owes nothing to the seed.
+                    record.forget(&entry.path);
+                    println!("dropped {}/{}", tree.repo, entry.path);
+                }
                 Err(err) => eprintln!("workforest: {}/{}: {err}", tree.repo, entry.path),
             }
+        }
+        if let Err(err) = record.write() {
+            eprintln!("workforest: {err}");
         }
     }
     Ok(())
