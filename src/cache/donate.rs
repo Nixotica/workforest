@@ -539,12 +539,12 @@ struct Locks {
 }
 
 impl Locks {
-    /// Take each of `locks`, relative to `dir`, shallowest first, failing with
-    /// the first that something else holds. One that can't be opened or
-    /// locked at all, as on a filesystem without locks, can't say.
+    /// Take each of `locks`, relative to `dir`, shallowest first, then by
+    /// path, failing with the first that something else holds. One that can't
+    /// be opened or locked at all, as on a filesystem without locks, can't say.
     fn take(&mut self, dir: &Path, locks: &[PathBuf]) -> std::result::Result<(), PathBuf> {
         let mut locks: Vec<&PathBuf> = locks.iter().collect();
-        locks.sort_by_key(|rel| rel.components().count());
+        locks.sort_by_key(|rel| (rel.components().count(), *rel));
         for rel in locks {
             let Ok(file) = File::open(dir.join(rel)) else {
                 continue;

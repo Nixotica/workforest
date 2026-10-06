@@ -23,9 +23,11 @@ pub const CARGO: Ecosystem = Ecosystem {
     path: "target",
     always_copy: &[
         // A lock belongs to the inode, so a shared one makes builds in every
-        // tree wait for each other: Cargo's build lock, and rustc's
-        // incremental session locks.
+        // tree wait for each other: Cargo's build locks, `.cargo-lock` and,
+        // since Cargo 1.98 or so, `.cargo-build-lock` and
+        // `.cargo-artifact-lock`, and rustc's incremental session locks.
         ".cargo-lock",
+        ".cargo-*-lock",
         "*.lock",
         // Cargo's record of what is up to date. Shared, a build in one tree
         // makes another take its stale output for fresh.

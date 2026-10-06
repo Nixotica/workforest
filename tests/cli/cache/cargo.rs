@@ -182,7 +182,14 @@ fn cargo_target_is_grafted_without_a_declaration() {
         &[(".gitignore", "/target\n"), ("Cargo.toml", MANIFEST)],
     );
     let target = repo.join("target");
-    write(&target.join("debug/.cargo-lock"), 0);
+    let locks = [
+        "debug/.cargo-lock",
+        "debug/.cargo-build-lock",
+        "debug/.cargo-artifact-lock",
+    ];
+    for lock in locks {
+        write(&target.join(lock), 0);
+    }
     // Each large enough to be hardlinked by size alone; aws-lc-sys's build
     // script prints over 500 KB of `output`.
     let private = [
@@ -202,7 +209,7 @@ fn cargo_target_is_grafted_without_a_declaration() {
     let out = sb.ok(&sb.root, &["new", "rusty", "repos/api"]);
 
     assert!(
-        out.contains("  cache target: grafted from the main checkout: 10 files"),
+        out.contains("  cache target: grafted from the main checkout: 12 files"),
         "{out}"
     );
     let grafted = sb.forest("rusty").join("api/target");
@@ -210,7 +217,7 @@ fn cargo_target_is_grafted_without_a_declaration() {
         &target.join("debug/deps/libapi-0123.rlib"),
         &grafted.join("debug/deps/libapi-0123.rlib")
     ));
-    for file in private.iter().chain(&["debug/.cargo-lock"]) {
+    for file in private.iter().chain(&locks) {
         assert!(
             !same_file(&target.join(file), &grafted.join(file)),
             "{file} should be the tree's own"
@@ -706,9 +713,9 @@ fn a_running_cargo_build_keeps_both_caches_out_of_a_donation() {
 
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     assert!(
-        stdout(&out).contains(
-            "  cache target: a build holds debug/.cargo-lock in the tree, so its cache may be half \
-             written; left alone\n"
+        holds_cargo_lock(
+            &stdout(&out),
+            "in the tree, so its cache may be half written; left alone"
         ),
         "{}",
         stdout(&out)
@@ -729,12 +736,22 @@ fn a_running_cargo_build_keeps_both_caches_out_of_a_donation() {
     build.finish();
 
     assert!(
-        stdout(&out).contains(
-            "  cache target: a build holds debug/.cargo-lock in the main checkout; left alone\n"
-        ),
+        holds_cargo_lock(&stdout(&out), "in the main checkout; left alone"),
         "{}",
         stdout(&out)
     );
+}
+
+/// Whether `report` says a build holds one of Cargo's build locks, and then
+/// `rest`: `.cargo-lock`, or one Cargo 1.98 added.
+fn holds_cargo_lock(report: &str, rest: &str) -> bool {
+    [".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock"]
+        .iter()
+        .any(|lock| {
+            report.contains(&format!(
+                "  cache target: a build holds debug/{lock} {rest}\n"
+            ))
+        })
 }
 
 #[test]
