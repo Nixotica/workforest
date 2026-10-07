@@ -1,4 +1,5 @@
-//! Settings: where forests live, and how build caches are grafted into them.
+//! Settings: where forests live, what their branches are called, and how
+//! build caches are grafted into them.
 //!
 //! Each setting comes from its environment variable, else the config file at
 //! `$XDG_CONFIG_HOME/workforest/config.toml`, else its default.
@@ -100,6 +101,35 @@ impl Config {
         })
     }
 
+    /// The prefix of the branch a tree gets when none is given, such as
+    /// `nix/` to plant forest `login` on `nix/login`; none by default. Only
+    /// commands that plant read it, so a bad value can't stop the others.
+    pub fn branch_prefix(&self) -> Result<Setting<String>> {
+        const VAR: &str = "WORKFOREST_BRANCH_PREFIX";
+        if let Some(prefix) = env_value(VAR) {
+            return Ok(Setting {
+                value: prefix,
+                source: Source::Env(VAR),
+            });
+        }
+        if let Some(item) = self.file.get(&["branch_prefix"]) {
+            return match item.as_str() {
+                Some(prefix) => Ok(Setting {
+                    value: prefix.to_owned(),
+                    source: self.file.source(),
+                }),
+                None => bail!(
+                    "branch_prefix in {} must be a string",
+                    self.file.path.display()
+                ),
+            };
+        }
+        Ok(Setting {
+            value: String::new(),
+            source: Source::Default,
+        })
+    }
+
     /// The directories where repos named on the command line are looked for:
     /// `$WORKFOREST_REPOS`, colon-separated like `PATH`, else `repos` in the
     /// config file, one path or a list, which `workforest setup` writes. There
@@ -165,6 +195,7 @@ impl Config {
     pub fn shown(&self) -> Vec<Shown> {
         let link_min = self.link_min();
         let repos = self.repos();
+        let branch_prefix = self.branch_prefix();
         vec![
             Shown {
                 name: "forest_root",
@@ -187,6 +218,19 @@ impl Config {
                     .map_err(|err| err.to_string()),
             },
             Shown {
+                name: "branch_prefix",
+                source: match &branch_prefix {
+                    Ok(setting) => setting.source.clone(),
+                    Err(_) => self.file.source(),
+                },
+                value: branch_prefix
+                    .map(|setting| match setting.value.as_str() {
+                        "" => "none".to_owned(),
+                        prefix => prefix.to_owned(),
+                    })
+                    .map_err(|err| err.to_string()),
+            },
+            Shown {
                 name: "cache.link_min",
                 source: match &link_min {
                     Ok(setting) => setting.source.clone(),
@@ -205,7 +249,7 @@ impl Config {
     /// Settings in the config file that workforest doesn't know, such as a
     /// misspelt one, which is otherwise ignored.
     pub fn unknown_settings(&self) -> Vec<String> {
-        const KNOWN: [&str; 3] = ["forest_root", "repos", "cache.link_min"];
+        const KNOWN: [&str; 4] = ["forest_root", "repos", "branch_prefix", "cache.link_min"];
         let Some(doc) = &self.file.doc else {
             return Vec::new();
         };

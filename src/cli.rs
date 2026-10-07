@@ -86,7 +86,8 @@ pub enum Command {
 
 #[derive(Args)]
 pub struct NewArgs {
-    /// Name of the forest, which is also the default branch name
+    /// Name of the forest, which is also the default branch name, after
+    /// branch_prefix from the config file
     pub forest: String,
     /// Repos to plant right away, by path or by name
     #[arg(add = ArgValueCompleter::new(complete::repos))]
@@ -278,7 +279,8 @@ pub struct Sparse {
 /// Which branch a planted tree gets.
 #[derive(Args)]
 pub struct Branching {
-    /// Branch to check out, created if it does not exist [default: the forest name]
+    /// Branch to check out, created if it does not exist [default: the forest
+    /// name, after branch_prefix from the config file]
     #[arg(short, long)]
     pub branch: Option<String>,
     /// Ref to create the branch from [default: origin/HEAD, else main or master]

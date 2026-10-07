@@ -140,7 +140,8 @@ fn main_worktree(config: &Config, arg: &str) -> Result<PathBuf> {
     git::main_worktree(&repos::resolve(config, arg)?)
 }
 
-/// Add a worktree of each repo to `forest`, all on the same branch. Unless
+/// Add a worktree of each repo to `forest`, all on the same branch: the one
+/// `branching` names, else the forest's name after the branch prefix. Unless
 /// `graft` is `None`, graft the build caches each repo declares from its seed,
 /// hardlinking files of that many bytes and up.
 fn plant_sources(
@@ -151,7 +152,10 @@ fn plant_sources(
     sparse: &[String],
     graft: Option<u64>,
 ) -> Result<()> {
-    let branch = branching.branch.unwrap_or_else(|| forest.name.clone());
+    let branch = match branching.branch {
+        Some(branch) => branch,
+        None => format!("{}{}", config.branch_prefix()?.value, forest.name),
+    };
     for source in sources {
         let repo = dir_name(&source);
         let dir = forest.tree_dir(&repo);

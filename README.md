@@ -152,7 +152,8 @@ unpack wherever they read skills from.
 cargo, add it yourself: `ln -s workforest ~/.cargo/bin/wf`.
 
 Inside a forest, commands act on that forest unless told otherwise. Every tree
-gets the branch named after its forest unless you pass `--branch`, and branches
+gets the branch named after its forest, after `branch_prefix` if the config
+sets one, unless you pass `--branch`, and branches
 off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `cut`
 and `burn` refuse to delete uncommitted changes, or commits that are neither
 pushed nor landed on the base, unless you pass `--force`. Work has landed once
@@ -434,20 +435,21 @@ too. The file is optional, and every setting in it is too:
 ```toml
 forest_root = "~/.workforest"   # where forests live
 repos = "~/code"                # where named repos are looked for; a list works too; no default
+branch_prefix = "nix/"          # put before the forest name in default branch names; none by default
 
 [cache]
 link_min = 65536                # bytes from which grafted cache files are hardlinked
 ```
 
 An environment variable overrides each setting: `WORKFOREST_ROOT`,
-`WORKFOREST_REPOS` (colon-separated, like `PATH`) and
-`WORKFOREST_CACHE_LINK_MIN`. `workforest setup` writes `repos`, keeping the
+`WORKFOREST_REPOS` (colon-separated, like `PATH`), `WORKFOREST_BRANCH_PREFIX`
+and `WORKFOREST_CACHE_LINK_MIN`. `workforest setup` writes `repos`, keeping the
 rest of the file as it was. So a setting comes from its environment variable,
 else the config file, else its default. Paths in the file are absolute or start
 with `~/`. `workforest config` prints each setting's value and where it came
 from, and warns about settings it doesn't know, such as a misspelt one. A file
 that isn't valid TOML stops every command; a bad `cache.link_min` stops only
-the commands that graft.
+the commands that graft, and a bad `branch_prefix` only those that plant.
 
 ## Development
 
