@@ -233,8 +233,6 @@ fn fire_leaves_trees_it_cannot_judge() {
 
     let detached = landed("detached");
     sb.git(&detached, &["checkout", "--quiet", "--detach"]);
-    let switched = landed("switched");
-    sb.git(&switched, &["checkout", "--quiet", "-b", "elsewhere"]);
     let locked = landed("locked");
     sb.git(&api, &["worktree", "lock", path(&locked)]);
     let unlisted = landed("unlisted");
@@ -272,10 +270,6 @@ fn fire_leaves_trees_it_cannot_judge() {
 
     for (forest, reason) in [
         ("detached", "its HEAD is detached".to_owned()),
-        (
-            "switched",
-            "it has elsewhere checked out, not its branch switched".to_owned(),
-        ),
         ("upper", "its base origin/lower no longer exists".to_owned()),
         (
             "locked",
@@ -305,6 +299,56 @@ fn fire_leaves_trees_it_cannot_judge() {
     );
     assert!(sb.forest("stray").join("extra").is_dir());
     assert!(out.contains("nothing to burn"), "{out}");
+}
+
+#[test]
+fn fire_judges_the_branch_a_tree_has_checked_out() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+
+    // Landed, then switched to a new branch with nothing more on it.
+    let switched = sb.pull_request("switched", "api");
+    sb.merge_on_remote("api", "switched", Merge::Squash);
+    sb.git(&switched, &["checkout", "--quiet", "-b", "elsewhere"]);
+
+    // Landed, then switched to a new branch for work that hasn't.
+    let onward = sb.pull_request("onward", "api");
+    sb.merge_on_remote("api", "onward", Merge::Squash);
+    sb.git(&onward, &["checkout", "--quiet", "-b", "next"]);
+    sb.commit(&onward, "next.txt");
+
+    // Stacked on lower, then switched to lower itself, whose work is only
+    // pushed: being on origin/lower is no landing for it.
+    let upper = stack(&sb);
+    sb.git(&upper, &["checkout", "--quiet", "lower"]);
+
+    let out = sb.ok(&sb.root, &["fire", "--yes", "--delete-branches"]);
+
+    assert!(out.contains("switched  burn\n"), "{out}");
+    assert!(
+        out.contains(&format!(
+            "  {:<24} {:<6} landed on origin/main; it has elsewhere checked out, not its branch switched\n",
+            "api", "dead"
+        )),
+        "{out}"
+    );
+    assert!(!sb.forest("switched").exists());
+    // Only the branch the tree was planted on is its own to delete.
+    assert_eq!(sb.git(&api, &["branch", "--list", "switched"]), "");
+    assert!(
+        sb.git(&api, &["branch", "--list", "elsewhere"])
+            .contains("elsewhere")
+    );
+
+    assert!(out.contains("2 other forest(s) in flight"), "{out}");
+    assert!(onward.is_dir() && upper.is_dir());
+    let plan = sb.ok(&sb.root, &["fire", "--no-fetch", "--json"]);
+    for reason in [
+        "3 commit(s) not on origin/main; it has next checked out, not its branch onward",
+        "2 commit(s) not on origin/main; it has lower checked out, not its branch upper",
+    ] {
+        assert!(plan.contains(reason), "{plan}");
+    }
 }
 
 #[test]
@@ -423,6 +467,37 @@ fn fire_burns_work_landed_on_a_local_base() {
 
     assert!(out.contains("landed on main\n"), "{out}");
     assert!(!sb.forest("loc").exists());
+}
+
+#[test]
+fn fire_burns_work_landed_on_the_remote_branch_a_local_base_tracks() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    sb.git(&api, &["push", "--quiet", "origin", "main:feature"]);
+    sb.git(&api, &["fetch", "--quiet"]);
+    sb.git(
+        &api,
+        &["branch", "--quiet", "--track", "feature", "origin/feature"],
+    );
+    sb.ok(&sb.root, &["new", "onto", "repos/api", "-B", "feature"]);
+    let tree = sb.forest("onto").join("api");
+    sb.commit(&tree, "onto.txt");
+    sb.git(&tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
+    let forge = sb.forge("api");
+    sb.git(
+        &forge,
+        &["checkout", "--quiet", "-B", "feature", "origin/feature"],
+    );
+    sb.git(&forge, &["merge", "--quiet", "--squash", "origin/onto"]);
+    sb.git(&forge, &["commit", "--quiet", "--message", "onto"]);
+    sb.git(&forge, &["push", "--quiet", "origin", "feature", ":onto"]);
+
+    // The local feature branch never hears of the merge; fire fetches the
+    // remote it tracks, which has.
+    let out = sb.ok(&sb.root, &["fire", "--yes"]);
+
+    assert!(out.contains("landed on origin/feature\n"), "{out}");
+    assert!(!tree.exists());
 }
 
 #[test]
@@ -662,4 +737,95 @@ fn a_backport_lands_only_on_the_release_branch_it_was_based_on() {
     let merged = sb.ok(&sb.root, &["fire"]);
     assert!(merged.contains("backport  burn\n"), "{merged}");
     assert!(merged.contains("landed on origin/release\n"), "{merged}");
+}
+
+#[test]
+fn stacked_work_lands_on_the_default_branch_once_its_base_branch_merges_though_it_lives_on() {
+    for merge in [Merge::Regular, Merge::Squash, Merge::Rebase] {
+        let sb = Sandbox::new();
+        sb.repo("api");
+        stack(&sb);
+        // lower merges, and the forge keeps its branch. upper, retargeted to
+        // main, carries lower's commits along with its own.
+        sb.merge_on_remote_keeping_branch("api", "lower", merge);
+        let open = sb.ok(&sb.root, &["fire"]);
+        assert!(
+            open.contains("1 other forest(s) in flight"),
+            "{merge:?}: {open}"
+        );
+
+        sb.merge_on_remote_keeping_branch("api", "upper", merge);
+
+        let out = sb.ok(&sb.root, &["fire", "--yes"]);
+        assert!(out.contains("upper  burn\n"), "{merge:?}: {out}");
+        assert!(out.contains("landed on origin/main\n"), "{merge:?}: {out}");
+        assert!(!sb.forest("upper").exists(), "{merge:?}");
+    }
+}
+
+#[test]
+fn work_moved_off_a_merged_base_that_lives_on_lands_on_the_default_branch() {
+    let sb = Sandbox::new();
+    sb.repo("api");
+    let upper = stack(&sb);
+    sb.merge_on_remote_keeping_branch("api", "lower", Merge::Squash);
+    // upper moves onto main, which has lower's work by now, leaving lower's
+    // own commits behind.
+    sb.git(&upper, &["fetch", "--quiet"]);
+    sb.git(
+        &upper,
+        &["rebase", "--quiet", "--onto", "origin/main", "origin/lower"],
+    );
+    sb.git(&upper, &["push", "--quiet", "--force"]);
+    let open = sb.ok(&sb.root, &["fire"]);
+    assert!(open.contains("1 other forest(s) in flight"), "{open}");
+
+    sb.merge_on_remote_keeping_branch("api", "upper", Merge::Squash);
+
+    let out = sb.ok(&sb.root, &["fire"]);
+    assert!(out.contains("upper  burn\n"), "{out}");
+    assert!(out.contains("landed on origin/main\n"), "{out}");
+}
+
+#[test]
+fn a_backport_does_not_land_on_the_default_branch_once_the_release_branch_has_commits_of_its_own() {
+    for bump_first in [true, false] {
+        let sb = Sandbox::new();
+        let api = sb.repo("api");
+        sb.git(&api, &["push", "--quiet", "origin", "main:release"]);
+        let bump = || {
+            let forge = sb.forge("api");
+            sb.git(
+                &forge,
+                &["checkout", "--quiet", "-B", "release", "origin/release"],
+            );
+            sb.commit(&forge, "version.txt");
+            sb.git(&forge, &["push", "--quiet", "origin", "release"]);
+        };
+        if bump_first {
+            bump();
+        }
+        let forge = sb.forge("api");
+        sb.commit(&forge, "fix.txt");
+        sb.git(&forge, &["push", "--quiet", "origin", "main"]);
+        sb.git(&api, &["fetch", "--quiet"]);
+        sb.ok(
+            &sb.root,
+            &["new", "backport", "repos/api", "-B", "origin/release"],
+        );
+        let tree = sb.forest("backport").join("api");
+        sb.commit(&tree, "fix.txt");
+        sb.git(&tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
+        if !bump_first {
+            bump();
+        }
+
+        // main has the same change, but the release branch doesn't, nor does
+        // main have the release branch's own commit.
+        let open = sb.ok(&sb.root, &["fire"]);
+        assert!(
+            open.contains("1 other forest(s) in flight"),
+            "bump first: {bump_first}: {open}"
+        );
+    }
 }
