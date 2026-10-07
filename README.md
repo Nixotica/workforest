@@ -159,10 +159,14 @@ pushed nor landed on the base, unless you pass `--force`. Work has landed once
 everything its branch changed is on the base, so a regular, squash or rebase
 merge all count, even after the merged branch is deleted. A squash merge still
 counts once the base has rewritten lines next to it, as lockfiles see all the
-time, unless a later commit reverts it. Once the base branch
-itself is gone, as a stacked branch's base is after it merges and the stacked
-pull request is retargeted, the repo's default branch (`origin/HEAD`) stands in
-for it. A base that lives on, such as a release branch, never has a stand-in.
+time, unless a later commit reverts it. A local base branch counts as
+landed on once the remote branch it tracks is. Once the base branch has merged
+into the repo's default branch (`origin/HEAD`), as a stacked branch's base does
+before the stacked pull request is retargeted, the default branch stands in for
+it, whether the forge deleted the base or kept it. So it does for a base whose
+own commits the tree carries, which then land only along with them. A base
+that never merges, such as a release branch, has no stand-in: a backport hasn't
+landed just because the default branch has the same change.
 They check the base as you last fetched it: fetch with `--prune` after merging,
 then burn. Before removing a tree, they give its build caches to its repo's
 seed, so that trees planted later start warm (see [The seed](#the-seed));
@@ -170,10 +174,11 @@ seed, so that trees planted later start warm (see [The seed](#the-seed));
 details.
 
 Forests pile up, and `workforest fire` clears them all at once. It fetches the
-remotes the trees' bases are on, pruning deleted branches, then calls a tree
-dead when `burn` would accept it and its branch has commits of its own that
-have all landed on its base, or on the default branch standing in for a base
-that is gone, or when its directory is gone. A tree with uncommitted changes,
+remotes the trees' bases are on, or that local bases track, pruning deleted
+branches, then calls a tree
+dead when `burn` would accept it and the branch it has checked out has commits
+of its own that have all landed on its base, or on what stands in for it, or
+when its directory is gone. A tree with uncommitted changes,
 with commits not on its base, or with nothing committed yet is live, and one
 that git can't judge, such as one whose base was deleted before its work
 landed anywhere, is left alone. A forest burns

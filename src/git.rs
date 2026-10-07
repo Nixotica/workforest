@@ -122,17 +122,88 @@ pub fn default_branch(dir: &Path) -> Option<String> {
     output(dir, origin_head)
 }
 
-/// The default branch, when it stands in for `base` as where work on `base`
-/// lands: once `base` is gone. A stacked branch's base is deleted when it
-/// merges, and the forge retargets the stacked pull request to the default
-/// branch. A base that lives on, such as a release branch, has no stand-in,
-/// even when the default branch has the same change, as it does for a
-/// backport.
-pub fn base_stand_in(dir: &Path, base: &str) -> Option<String> {
-    if resolves(dir, base) {
+/// Where else the work at `tip`, made on `base`, may have landed, when not on
+/// `base` itself: the remote branch that `base` tracks, when `base` is a local
+/// branch, since that is `base` as everyone else sees it; and the default
+/// branch, standing in for `base` once the work on `base` lands there (see
+/// [`default_stands_in`]).
+pub fn stand_ins(dir: &Path, base: &str, tip: &str) -> Vec<String> {
+    let mut stand_ins = Vec::new();
+    if let Some(upstream) = upstream_of(dir, base) {
+        stand_ins.push(upstream);
+    }
+    if let Some(default) = default_branch(dir)
+        && default != base
+        && !stand_ins.contains(&default)
+        && default_stands_in(dir, base, &default, tip)
+    {
+        stand_ins.push(default);
+    }
+    stand_ins
+}
+
+/// Whether the default branch `default` stands in for `base` as where the
+/// work at `tip` lands. A stacked branch's pull request moves to the default
+/// branch once its base merges, so `default` stands in for a base:
+///
+/// - that is gone, as a merged branch is once the forge deletes it;
+/// - that has merged into `default`, though the forge kept the branch;
+/// - whose own commits `tip` carries, as a stacked pull request that took its
+///   base's commits along with it does. Its work then lands on `default` only
+///   once those commits have too.
+///
+/// So a base that never merges, such as a release branch, doesn't have
+/// `default` stand in for it just because `default` has the same change, as it
+/// does for a backport: a backport that carries the release branch's own
+/// commits lands there only if they do too, which they don't.
+fn default_stands_in(dir: &Path, base: &str, default: &str, tip: &str) -> bool {
+    if !resolves(dir, base) {
+        return true;
+    }
+    let carries_own_commits = output(dir, ["merge-base", base, tip])
+        .is_some_and(|shared| !succeeds(dir, ["merge-base", "--is-ancestor", &shared, default]));
+    carries_own_commits
+        || match count(dir, &format!("{default}..{base}")) {
+            // Its own commits have all landed.
+            Some(ahead) if ahead > 0 => landed(dir, default, base),
+            // Merged without a commit of its own beyond what `default` has:
+            // through a merge commit, unlike a branch cut from `default`.
+            Some(_) => !on_first_parent_line(dir, base, default),
+            None => false,
+        }
+}
+
+/// Whether `rev`, an ancestor of `branch`, is on the line of first parents
+/// that `branch` moved along, as a commit made or fast-forwarded onto it is,
+/// rather than reached only through a merge commit. Anything git cannot answer
+/// counts as on the line.
+fn on_first_parent_line(dir: &Path, rev: &str, branch: &str) -> bool {
+    let range = format!("{rev}..{branch}");
+    let Some(walk) = output(dir, ["rev-list", "--first-parent", &range]) else {
+        return true;
+    };
+    // The walk back along the line stops at the first commit `rev` has; that
+    // is `rev` itself if it is on the line.
+    let Some(oldest) = walk.lines().last() else {
+        return true;
+    };
+    let parent = format!("{oldest}^");
+    let rev = format!("{rev}^{{commit}}");
+    output(dir, ["rev-parse", &parent, &rev]).is_none_or(|commits| {
+        let mut commits = commits.lines();
+        commits.next() == commits.next()
+    })
+}
+
+/// The remote branch that `base` tracks, if `base` is a local branch that
+/// tracks one that exists.
+pub fn upstream_of(dir: &Path, base: &str) -> Option<String> {
+    if !branch_exists(dir, base) {
         return None;
     }
-    default_branch(dir).filter(|default| default != base)
+    let upstream = format!("{base}@{{upstream}}");
+    output(dir, ["rev-parse", "--abbrev-ref", &upstream])
+        .filter(|upstream| !upstream.is_empty() && resolves(dir, upstream))
 }
 
 /// Whether `rev` names a commit in the repo at `dir`.
@@ -300,8 +371,8 @@ pub fn has_upstream(dir: &Path) -> bool {
 
 /// Why deleting the tree at `dir` would lose work, if it would: uncommitted
 /// changes, or commits that its upstream (else `base`) lacks and that have not
-/// [`landed`] on `base`, or on the default branch standing in for it (see
-/// [`base_stand_in`]). Anything git cannot answer counts as a risk.
+/// [`landed`] on `base`, or on what stands in for it (see [`stand_ins`]).
+/// Anything git cannot answer counts as a risk.
 pub fn unlanded_work(dir: &Path, base: &str) -> Option<String> {
     if !dir.is_dir() {
         return None;
@@ -325,7 +396,9 @@ pub fn unlanded_work(dir: &Path, base: &str) -> Option<String> {
         }
     };
     let landed_anywhere = landed(dir, base, "HEAD")
-        || base_stand_in(dir, base).is_some_and(|stand_in| landed(dir, &stand_in, "HEAD"));
+        || stand_ins(dir, base, "HEAD")
+            .iter()
+            .any(|stand_in| landed(dir, stand_in, "HEAD"));
     (!landed_anywhere).then_some(risk)
 }
 
@@ -373,14 +446,16 @@ pub fn worktree_record(dir: &Path) -> Option<PathBuf> {
     output(dir, ["rev-parse", "--absolute-git-dir"]).map(PathBuf::from)
 }
 
-/// The ref a tree's work lands on: its base, unless that is the tree's own
-/// branch on a remote, as when a tree is planted to carry on with a pushed
-/// branch. Reaching that only means the work was pushed, so the repo's
-/// default base stands in for it.
-pub fn landing_base(repo: &Path, base: &str, branch: &str) -> String {
+/// The ref a tree's work lands on: its base, unless that is one of `branches`
+/// on a remote, as when a tree is planted to carry on with a pushed branch, or
+/// has the branch its base was pushed from checked out. Reaching that only
+/// means the work was pushed, so the repo's default base stands in for it.
+pub fn landing_base(repo: &Path, base: &str, branches: &[&str]) -> String {
     let own = remote_of(repo, base).is_some_and(|remote| {
         let tracking = base.strip_prefix("refs/remotes/").unwrap_or(base);
-        tracking.strip_prefix(&format!("{remote}/")) == Some(branch)
+        tracking
+            .strip_prefix(&format!("{remote}/"))
+            .is_some_and(|name| branches.contains(&name))
     });
     if own {
         default_base(repo)

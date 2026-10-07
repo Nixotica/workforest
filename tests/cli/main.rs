@@ -176,6 +176,19 @@ impl Sandbox {
     /// Merge `branch` into `main` on `repo`'s remote the way a forge does,
     /// after `main` has moved on, then delete the branch as forges do on merge.
     fn merge_on_remote(&self, repo: &str, branch: &str, merge: Merge) {
+        let forge = self.merge_on_forge(repo, branch, merge);
+        self.push_main_deleting(&forge, branch);
+    }
+
+    /// Merge `branch` as [`Sandbox::merge_on_remote`] does, but keep the
+    /// branch, as a forge set not to delete merged branches does.
+    fn merge_on_remote_keeping_branch(&self, repo: &str, branch: &str, merge: Merge) {
+        let forge = self.merge_on_forge(repo, branch, merge);
+        self.git(&forge, &["push", "--quiet", "origin", "main"]);
+    }
+
+    /// Merge `branch` into `main` in `repo`'s forge, without pushing it.
+    fn merge_on_forge(&self, repo: &str, branch: &str, merge: Merge) -> PathBuf {
         let forge = self.forge(repo);
         let theirs = format!("origin/{branch}");
         self.commit(&forge, &format!("{branch}-meanwhile.txt"));
@@ -197,7 +210,7 @@ impl Sandbox {
                 self.git(&forge, &["merge", "--quiet", "--ff-only", "landing"]);
             }
         }
-        self.push_main_deleting(&forge, branch);
+        forge
     }
 
     /// Push the forge's `main`, deleting `branch` from the remote.
