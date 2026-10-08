@@ -390,3 +390,38 @@ fn setup_asks_suggesting_directories_that_hold_repos() {
         "{refusal}"
     );
 }
+
+#[test]
+fn branch_prefix_goes_before_the_forest_name_unless_a_branch_is_given() {
+    let sb = Sandbox::new();
+    sb.repo("api");
+    sb.write_config("branch_prefix = \"nix/\"\n");
+    let home = sb.root.join("home");
+
+    let out = stdout(&sb.unrooted(&["new", "login", "repos/api"], &[]));
+    assert!(out.contains("(branch nix/login, off origin/main)"), "{out}");
+    let tree = home.join(".workforest/login/api");
+    assert_eq!(sb.git(&tree, &["branch", "--show-current"]), "nix/login");
+
+    stdout(&sb.unrooted(&["new", "named", "repos/api", "--branch", "topic"], &[]));
+    let tree = home.join(".workforest/named/api");
+    assert_eq!(sb.git(&tree, &["branch", "--show-current"]), "topic");
+
+    let env = [("WORKFOREST_BRANCH_PREFIX", "env/")];
+    stdout(&sb.unrooted(&["new", "envied", "repos/api"], &env));
+    let tree = home.join(".workforest/envied/api");
+    assert_eq!(sb.git(&tree, &["branch", "--show-current"]), "env/envied");
+    let shown = stdout(&sb.unrooted(&["config"], &env));
+    assert!(
+        shown.contains(&format!(
+            "  {:<16} {:<32} $WORKFOREST_BRANCH_PREFIX\n",
+            "branch_prefix", "env/"
+        )),
+        "{shown}"
+    );
+
+    sb.write_config("branch_prefix = 7\n");
+    let refusal = stderr(&sb.unrooted(&["new", "bad", "repos/api"], &[]));
+    assert!(refusal.contains("branch_prefix in "), "{refusal}");
+    stdout(&sb.unrooted(&["ls"], &[]));
+}
