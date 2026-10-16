@@ -52,7 +52,7 @@ fn fire_leaves_live_trees_that_could_pass_for_dead() {
     sb.commit(&forge, "moved-on.txt");
     sb.git(&forge, &["push", "--quiet", "origin", "main"]);
     let pulled = sb.forest("pulled").join("api");
-    sb.git(&pulled, &["pull", "--quiet", "--ff-only"]);
+    sb.git(&pulled, &["pull", "--quiet", "--ff-only", "origin", "main"]);
 
     // A commit made, then discarded to start over: its reflog records a
     // commit, but not one that is on the base.

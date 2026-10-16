@@ -122,7 +122,8 @@ Options:
   name, giving every repo the same branch name. If the branch already exists in
   a repo, it is checked out rather than recreated.
 - `-B, --base <ref>` — what to branch off. Defaults to `origin/HEAD`, falling
-  back to a local `main` or `master`.
+  back to a local `main` or `master`. A new branch doesn't track its base,
+  unless the base is the branch's own remote branch.
 - `--force` — on `cut`/`burn`, skip the safety checks for uncommitted changes
   and for commits that are neither pushed nor landed.
 - `--delete-branches` — on `cut`/`burn`/`fire`, also delete the trees'
@@ -344,6 +345,13 @@ finished, fetch and `burn` it as above.
   and fails listing the trees it failed in. Wrap shell syntax in `sh -c '...'`.
   `--parallel` runs several trees at once and prints each tree's output whole
   as it finishes; keep the default for builds, which compete for CPU and disk.
+- Publish a tree's branch with `git push -u origin HEAD`. A new branch has no
+  upstream until then, so a bare `git push` refuses unless git is set to
+  `push.autoSetupRemote`. A tree planted before workforest 0.18.0 may track its
+  base instead, and under `push.default = upstream` a bare push or
+  `git push origin <branch>` then lands on the base, unreviewed. If
+  `git rev-parse --abbrev-ref @{upstream}` names the base, clear it with
+  `git branch --unset-upstream` first.
 - Deleting a forest leaves the branches alone unless `--delete-branches` is
   passed, so a burned forest can be started again on the same branch names.
 - Build caches are grafted automatically. Use `--no-cache` only when a

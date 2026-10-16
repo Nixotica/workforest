@@ -241,6 +241,13 @@ pub fn add_worktree(
     if !creating {
         args.extend([dest.as_os_str(), OsStr::new(branch)]);
     } else {
+        // A new branch tracks its base only when that is its own remote
+        // branch, as when carrying on with a pushed branch. Tracking any other
+        // base sends a push there under `push.default = upstream`: work meant
+        // for a pull request would land on the base unreviewed.
+        if !is_remote_copy(repo, base, &[branch]) {
+            args.push(OsStr::new("--no-track"));
+        }
         args.extend([
             OsStr::new("-b"),
             OsStr::new(branch),
@@ -451,17 +458,22 @@ pub fn worktree_record(dir: &Path) -> Option<PathBuf> {
 /// has the branch its base was pushed from checked out. Reaching that only
 /// means the work was pushed, so the repo's default base stands in for it.
 pub fn landing_base(repo: &Path, base: &str, branches: &[&str]) -> String {
-    let own = remote_of(repo, base).is_some_and(|remote| {
-        let tracking = base.strip_prefix("refs/remotes/").unwrap_or(base);
-        tracking
-            .strip_prefix(&format!("{remote}/"))
-            .is_some_and(|name| branches.contains(&name))
-    });
-    if own {
+    if is_remote_copy(repo, base, branches) {
         default_base(repo)
     } else {
         base.to_owned()
     }
+}
+
+/// Whether `base` names one of `branches` on a remote: the remote branch it
+/// is pushed to under its own name.
+fn is_remote_copy(repo: &Path, base: &str, branches: &[&str]) -> bool {
+    remote_of(repo, base).is_some_and(|remote| {
+        let tracking = base.strip_prefix("refs/remotes/").unwrap_or(base);
+        tracking
+            .strip_prefix(&format!("{remote}/"))
+            .is_some_and(|name| branches.contains(&name))
+    })
 }
 
 /// The remote whose tracking branch `base` names, if it names one. A base that
