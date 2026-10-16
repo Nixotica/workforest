@@ -154,11 +154,16 @@ cargo, add it yourself: `ln -s workforest ~/.cargo/bin/wf`.
 Inside a forest, commands act on that forest unless told otherwise. Every tree
 gets the branch named after its forest, after `branch_prefix` if the config
 sets one, unless you pass `--branch`, and branches
-off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. `cut`
-and `burn` refuse to delete uncommitted changes, or commits that are neither
-pushed nor landed on the base, unless you pass `--force`. Work has landed once
-everything its branch changed is on the base, so a regular, squash or rebase
-merge all count, even after the merged branch is deleted. A squash merge still
+off `origin/HEAD` (else `main` or `master`) unless you pass `--base`. A new
+branch doesn't track its base, so pushing the branch can't land on the base,
+whatever `push.default` says: publish it with `git push -u origin HEAD`, which
+makes its own remote branch its upstream. Only a branch off its own remote
+branch, as when carrying on with one already pushed, tracks it from the start,
+and a branch that already exists keeps the upstream it has. `cut` and `burn`
+refuse to delete uncommitted changes, or commits that are neither pushed nor
+landed on the base, unless you pass `--force`. Work has landed once everything
+its branch changed is on the base, so a regular, squash or rebase merge all
+count, even after the merged branch is deleted. A squash merge still
 counts once the base has rewritten lines next to it, as lockfiles see all the
 time, unless a later commit reverts it. A local base branch counts as
 landed on once the remote branch it tracks is. Once the base branch has merged

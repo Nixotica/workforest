@@ -366,6 +366,105 @@ fn plant_checks_out_an_existing_branch_or_creates_one_off_the_base() {
 }
 
 #[test]
+fn a_new_branch_tracks_its_base_only_when_that_is_its_own_remote_branch() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    // Even when git is told to have branches off local ones track them too.
+    sb.git(&api, &["config", "branch.autoSetupMerge", "always"]);
+    sb.git(&api, &["push", "--quiet", "origin", "main:lower"]);
+    sb.git(&api, &["fetch", "--quiet"]);
+    let upstream = |forest: &str| {
+        let tree = sb.forest(forest).join("api");
+        let args = ["rev-parse", "--abbrev-ref", "@{upstream}"];
+        let output = sb
+            .isolate(Command::new("git").arg("-C").arg(&tree).args(args))
+            .output()
+            .expect("run git");
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    };
+
+    sb.ok(&sb.root, &["new", "fresh", "repos/api"]);
+    sb.ok(&sb.root, &["new", "local", "repos/api", "-B", "main"]);
+    sb.ok(
+        &sb.root,
+        &["new", "upper", "repos/api", "-B", "origin/lower"],
+    );
+    sb.ok(
+        &sb.root,
+        &["new", "lower", "repos/api", "-B", "origin/lower"],
+    );
+
+    assert_eq!(upstream("fresh"), None);
+    assert_eq!(upstream("local"), None);
+    assert_eq!(upstream("upper"), None);
+    // Carrying on with a pushed branch: its base is where it pushes to.
+    assert_eq!(upstream("lower").as_deref(), Some("origin/lower"));
+}
+
+#[test]
+fn a_push_from_a_new_tree_never_lands_on_its_base() {
+    let sb = Sandbox::new();
+    let api = sb.repo("api");
+    // As people set it so that a branch can push to one of another name.
+    sb.git(&api, &["config", "push.default", "upstream"]);
+    let remote = sb.root.join("remotes").join("api.git");
+    let main = sb.git(&remote, &["rev-parse", "main"]);
+    sb.ok(&sb.root, &["new", "pr", "repos/api"]);
+    let tree = sb.forest("pr").join("api");
+    let status = || sb.ok(&sb.root, &["status", "pr"]);
+    let published = || sb.git(&remote, &["rev-parse", "pr"]);
+    sb.commit(&tree, "one.txt");
+
+    // With no upstream to send it to, a bare push refuses.
+    let bare = sb
+        .isolate(Command::new("git").arg("-C").arg(&tree).arg("push"))
+        .output()
+        .expect("run git");
+    assert!(!bare.status.success(), "a bare push should refuse");
+    assert_eq!(sb.git(&remote, &["rev-parse", "main"]), main);
+    let before = status();
+    assert!(
+        before.contains("clean  +1/-0 vs origin/main, 1 unpushed\n"),
+        "{before}"
+    );
+    let refusal = sb.fails(&sb.root, &["burn", "pr"]);
+    assert!(
+        refusal.contains("  api: 1 commit(s) not pushed anywhere or landed on origin/main"),
+        "{refusal}"
+    );
+
+    // Pushing the branch by name creates it.
+    sb.git(&tree, &["push", "--quiet", "-u", "origin", "pr"]);
+    assert_eq!(sb.git(&remote, &["rev-parse", "main"]), main);
+    assert_eq!(published(), sb.git(&tree, &["rev-parse", "HEAD"]));
+    let after = status();
+    assert!(
+        after.contains("clean  +1/-0 vs origin/main, pushed\n"),
+        "{after}"
+    );
+
+    // From then on, a bare push goes there too.
+    sb.commit(&tree, "two.txt");
+    let ahead = status();
+    assert!(
+        ahead.contains("+2/-0 vs origin/main, 1 unpushed\n"),
+        "{ahead}"
+    );
+    sb.git(&tree, &["push", "--quiet"]);
+    assert_eq!(sb.git(&remote, &["rev-parse", "main"]), main);
+    assert_eq!(published(), sb.git(&tree, &["rev-parse", "HEAD"]));
+    let pushed = status();
+    assert!(
+        pushed.contains("+2/-0 vs origin/main, pushed\n"),
+        "{pushed}"
+    );
+    sb.ok(&sb.root, &["burn", "pr"]);
+}
+
+#[test]
 fn the_base_falls_back_to_a_local_main_branch() {
     let sb = Sandbox::new();
     sb.init(&sb.repos().join("solo"));
@@ -461,12 +560,12 @@ fn status_says_whether_commits_ahead_of_the_base_are_pushed() {
     let tree = sb.forest("pr").join("api");
     let status = || sb.ok(&sb.root, &["status", "pr"]);
 
-    // A planted branch tracks its base, which lacks the branch's commits.
+    // A planted branch has no upstream until its first push.
     sb.commit(&tree, "one.txt");
-    let tracking_base = status();
+    let unpublished = status();
     assert!(
-        tracking_base.contains("clean  +1/-0 vs origin/main, 1 unpushed\n"),
-        "{tracking_base}"
+        unpublished.contains("clean  +1/-0 vs origin/main, 1 unpushed\n"),
+        "{unpublished}"
     );
 
     sb.git(&tree, &["push", "--quiet", "-u", "origin", "HEAD"]);
@@ -530,7 +629,7 @@ fn cut_refuses_to_lose_work_unless_forced() {
     sb.commit(&tree, "work.txt");
     let ahead = sb.fails(&forest, &["cut", "api"]);
     assert!(
-        ahead.contains("api has 1 unpushed commit(s), not landed on origin/main"),
+        ahead.contains("api has 1 commit(s) not pushed anywhere or landed on origin/main"),
         "{ahead}"
     );
 
@@ -612,13 +711,13 @@ fn cut_counts_work_as_landed_once_the_base_is_fetched() {
     let forest = sb.forest("pr");
     let tree = forest.join("api");
     sb.commit(&tree, "work.txt");
-    // Pushed without -u, so the branch still tracks origin/main.
+    // Pushed without -u, so the branch still has no upstream.
     sb.git(&tree, &["push", "--quiet", "origin", "HEAD"]);
     sb.merge_on_remote("api", "pr", Merge::Squash);
 
     let stale = sb.fails(&forest, &["cut", "api"]);
     assert!(
-        stale.contains("api has 1 unpushed commit(s), not landed on origin/main"),
+        stale.contains("api has 1 commit(s) not pushed anywhere or landed on origin/main"),
         "{stale}"
     );
     sb.git(&tree, &["fetch", "--quiet"]);
@@ -728,7 +827,10 @@ fn burn_removes_a_forest_only_when_no_work_would_be_lost() {
     fs::write(forest.join("web").join("scratch"), "x").unwrap();
     let refusal = sb.fails(&sb.root, &["burn", "blaze"]);
     assert!(refusal.contains("refusing to burn blaze"), "{refusal}");
-    assert!(refusal.contains("  api: 1 unpushed commit(s)"), "{refusal}");
+    assert!(
+        refusal.contains("  api: 1 commit(s) not pushed anywhere"),
+        "{refusal}"
+    );
     assert!(refusal.contains("  web: uncommitted changes"), "{refusal}");
     assert!(forest.join("api").is_dir(), "a refusal removes nothing");
 
