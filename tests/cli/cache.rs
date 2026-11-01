@@ -13,6 +13,7 @@ use tempfile::TempDir;
 use super::{Sandbox, path};
 
 mod cargo;
+mod copy;
 mod seed;
 
 /// The default size from which cache files are hardlinked.

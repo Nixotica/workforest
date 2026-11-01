@@ -140,7 +140,7 @@ unpack wherever they read skills from.
 | `workforest shell-init <shell>` | print `wfcd`, a function that cds into a forest or one of its trees |
 | `workforest config` | each setting, its value, and where it comes from |
 | `workforest cache status [forest]` | per tree, how much of each build cache is still hardlinked to other copies, and how old it is next to the seed's |
-| `workforest cache graft [tree...]` | graft build caches into trees already planted (`--force` replaces them) |
+| `workforest cache graft [tree...]` | graft build caches into trees already planted, and copy in the ignored files they lack (`--force` replaces the caches) |
 | `workforest cache drop [tree...]` | delete trees' grafted build caches |
 | `workforest cache donate [tree...]` | give trees' build caches to their repos' seeds, where they are newer |
 | `workforest cache seeds` | list the repos' seeds, which trees graft from and donate to |
@@ -257,6 +257,43 @@ wfcd auth-migration        # the forest
 wfcd auth-migration api    # one of its trees
 ```
 
+## Ignored files
+
+A fresh tree has only what git checks out, so whatever the main checkout keeps
+out of git, such as a `.env`, `node_modules` or a downloaded tool, would have
+to be set up again in every tree. Instead, `new` and `plant` copy what git
+ignores in each repo's main checkout into the tree, so that the tree works as
+the main checkout does from the start. Each copy is the tree's own: nothing is
+hardlinked, so changing a copy changes nothing else, and when the tree is cut
+or burned its copies go with it, never back to the main checkout.
+
+These stay behind:
+
+- what git doesn't ignore: untracked files are work in progress, and copies of
+  them would show up in the tree's status and keep `burn` from removing it;
+- the caches a repo declares, which are grafted instead (see
+  [Build caches](#build-caches)), and paths it declares `never`, which stay
+  cold;
+- what lies outside a sparse tree's directories, though its top level is
+  copied;
+- what the tree's own branch doesn't ignore, which would show up in its status;
+- what names the path it was made at, where a copy would install or build into
+  the main checkout: Python venvs, CMake build directories and Gradle's
+  `.gradle`. Make those afresh in the tree;
+- a git worktree or submodule checkout, whose copy would share its git state.
+
+A copy never replaces anything. `cache graft` copies in what a tree lacks, as
+for one planted before this or before its main checkout had it, and leaves
+alone what the tree has, even with `--force`: to take the main checkout's
+again, delete the tree's and run `cache graft`. Copies keep their modification
+times, and as with a graft, the tree's files older than the newest copy are
+marked as changed, so that copied output can't pass as built from them.
+
+Copies cost the disk of everything copied. Declare a large ignored directory
+that trees don't need as `never`, in `.git/workforest-cache` (see below), and
+it stays behind. `--clean` on `new` and `plant` plants only what git checks
+out: no copies, and no caches.
+
 ## Build caches
 
 A fresh tree has no build output, so its first build would start from cold.
@@ -276,7 +313,7 @@ build    clone   *.lock,state/*
 | mode | what each tree gets |
 | --- | --- |
 | `clone` (default) | the seed's directory, with files of 64 KiB and up hardlinked, costing no disk, and smaller files copied |
-| `never` | nothing; the cache starts cold |
+| `never` | nothing; the cache starts cold, and isn't copied either |
 
 Cargo's `target` needs no declaration: a repo with a `Cargo.toml` at its root
 grafts it as `clone`, and says nothing when its main checkout has no `target`,
@@ -407,7 +444,8 @@ scripts record the path they were created at), a CMake `build/`
 `.gradle/`. An interrupted doctor leaves its scratch worktree, a `.doctor-*`
 directory under the forest root, until the next doctor of that repo removes it.
 
-`--no-cache` on `new` and `plant` skips the graft, and `cache.link_min`
+`--no-cache` on `new` and `plant` skips the graft, though ignored files are
+still copied, and `--clean` skips both. `cache.link_min`
 (default `65536`, see [Configuration](#configuration)) sets the size from which
 files are hardlinked. On btrfs and XFS a copy shares its data until written, so it
 costs little disk either.

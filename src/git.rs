@@ -344,6 +344,76 @@ pub fn tracks(dir: &Path, path: &str) -> bool {
     output(dir, ["ls-files", "--", &pathspec]).is_none_or(|files| !files.is_empty())
 }
 
+/// What an ignore pattern matches in the worktree at `dir` that git tracks
+/// nothing of, relative to `dir`, each with whether it is a directory. A
+/// directory a pattern matches comes as itself rather than as what it holds.
+pub fn ignored(dir: &Path) -> Option<Vec<(PathBuf, bool)>> {
+    // Not `ls-files --directory`, which also lists a directory that merely
+    // holds nothing but ignored files, as if a pattern matched it. Optional
+    // locks are off, so that a checkout this only reads never has its index
+    // written.
+    let list = stdout(
+        dir,
+        [
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--ignored=matching",
+            "--untracked-files=normal",
+            "--no-renames",
+            "--ignore-submodules=all",
+        ],
+    )?;
+    let paths = nul_separated(&list)
+        .filter_map(|record| record.as_bytes().strip_prefix(b"!! "))
+        .map(|path| match path.strip_suffix(b"/") {
+            Some(dir) => (PathBuf::from(OsStr::from_bytes(dir)), true),
+            None => (PathBuf::from(OsStr::from_bytes(path)), false),
+        })
+        .collect();
+    Some(paths)
+}
+
+/// Which of `paths`, each with whether it is a directory, git ignores in the
+/// worktree at `dir` and doesn't track, if git can tell. They needn't exist.
+pub fn ignored_among(dir: &Path, paths: &[(PathBuf, bool)]) -> Option<Vec<PathBuf>> {
+    let mut input = Vec::new();
+    for (path, is_dir) in paths {
+        input.extend_from_slice(path.as_os_str().as_bytes());
+        if *is_dir {
+            input.push(b'/');
+        }
+        input.push(0);
+    }
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["check-ignore", "-z", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdin = child.stdin.take()?;
+    // Fed from a thread, so that git can't stall writing what it found while
+    // it waits for the rest of the paths.
+    let feeding = thread::spawn(move || stdin.write_all(&input));
+    let out = child.wait_with_output().ok()?;
+    feeding.join().ok()?.ok()?;
+    // 1 says that none of them is ignored.
+    if !matches!(out.status.code(), Some(0 | 1)) {
+        return None;
+    }
+    let ignored = nul_separated(&out.stdout)
+        .map(|path| {
+            let bytes = path.as_bytes();
+            PathBuf::from(OsStr::from_bytes(bytes.strip_suffix(b"/").unwrap_or(bytes)))
+        })
+        .collect();
+    Some(ignored)
+}
+
 /// The files of the worktree at `dir` that git tracks, in its checked-out
 /// submodules too, or would track if added: those it doesn't ignore. Paths are
 /// relative to `dir`.

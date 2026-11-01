@@ -18,8 +18,10 @@ the repo you're in. Once `workforest setup` has said where your repos live, a
 bare name such as api names one there. Forests live under $WORKFOREST_ROOT, else forest_root in
 ~/.config/workforest/config.toml, else ~/.workforest; see `workforest config`.
 
-Planting a tree also grafts the build caches its repo declares in
-.workforest-cache; see `workforest help cache`.
+Planting a tree also copies in what git ignores in its repo's main checkout,
+such as a .env or node_modules, as the tree's own, and grafts the build caches
+the repo declares in .workforest-cache; see `workforest help cache`. --clean
+plants only what git checks out.
 
 Examples:
   workforest new fix-login .                       one tree: the repo you're in
@@ -288,12 +290,17 @@ pub struct Branching {
     pub base: Option<String>,
 }
 
-/// Whether planted trees get their repos' build caches.
+/// What planted trees get from their repos' main checkouts beyond what git
+/// checks out: copies of what git ignores there, and grafted build caches.
 #[derive(Args)]
 pub struct Caching {
     /// Don't graft the repos' build caches into the new trees
     #[arg(long)]
     pub no_cache: bool,
+    /// Plant only what git checks out: don't copy the main checkouts' ignored
+    /// files into the new trees, or graft their build caches
+    #[arg(long)]
+    pub clean: bool,
 }
 
 /// How far removing a tree may go.
@@ -355,7 +362,8 @@ pub enum CacheCommand {
     /// copies, and how old it is next to the seed's
     #[command(visible_alias = "st")]
     Status(ReportArgs),
-    /// Graft caches into trees that are already planted
+    /// Graft caches into trees that are already planted, and copy in the main
+    /// checkout's ignored files they don't have
     Graft(CacheGraftArgs),
     /// Delete trees' grafted clone caches
     Drop(CacheDropArgs),
@@ -382,7 +390,7 @@ pub struct CacheGraftArgs {
     pub trees: Vec<String>,
     #[command(flatten)]
     pub target: Target,
-    /// Replace caches the trees already have
+    /// Replace caches the trees already have. Copies are never replaced
     #[arg(long)]
     pub force: bool,
 }
