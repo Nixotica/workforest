@@ -10,23 +10,31 @@ use std::path::{Path, PathBuf};
 /// directory comes before what it holds. An error leaves out the directory it
 /// came from, and the walk goes on, so a caller that tolerates unreadable
 /// parts can skip errors with `flatten`.
-pub fn walk(root: &Path) -> Walk {
+pub fn walk(root: &Path) -> Walk<'static> {
+    walk_skipping(root, None)
+}
+
+/// As [`walk`], but a directory that `skip` takes, by its path relative to
+/// `root`, is left out along with everything in it.
+pub fn walk_skipping<'a>(root: &Path, skip: Option<&'a dyn Fn(&Path) -> bool>) -> Walk<'a> {
     Walk {
         root: root.to_path_buf(),
         pending: vec![PathBuf::new()],
         open: None,
+        skip,
     }
 }
 
-pub struct Walk {
+pub struct Walk<'a> {
     root: PathBuf,
     /// Directories found but not read yet.
     pending: Vec<PathBuf>,
     /// The directory being read.
     open: Option<(PathBuf, ReadDir)>,
+    skip: Option<&'a dyn Fn(&Path) -> bool>,
 }
 
-impl Iterator for Walk {
+impl Iterator for Walk<'_> {
     type Item = io::Result<(PathBuf, Metadata)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -41,6 +49,9 @@ impl Iterator for Walk {
                             Err(err) => return Some(Err(err)),
                         };
                         if meta.is_dir() {
+                            if self.skip.is_some_and(|skip| skip(&rel)) {
+                                continue;
+                            }
                             self.pending.push(rel.clone());
                         }
                         return Some(Ok((rel, meta)));

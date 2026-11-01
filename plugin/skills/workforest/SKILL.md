@@ -138,6 +138,9 @@ Options:
   to do, pass `--json` rather than parsing columns; the fields are listed under
   "JSON output" in the README.
 - `--no-cache` — on `new`/`plant`, don't graft the repos' build caches.
+  Ignored files are still copied.
+- `--clean` — on `new`/`plant`, plant only what git checks out: no copies of
+  the main checkouts' ignored files, and no build caches.
 - `--no-donate-cache` — on `cut`/`burn`/`fire`, don't first give each tree's
   build caches to its repo's seed (see "Build caches").
 - `--sparse <dir>...` — on `new`/`plant`, check out only those directories of
@@ -181,6 +184,24 @@ workforest status                             # what's dirty, what's ahead
 workforest burn auth-migration --delete-branches
 ```
 
+## Ignored files
+
+From workforest 0.19.0, `new` and `plant` copy what git ignores in each repo's
+main checkout into the tree, such as a `.env`, `node_modules` or a downloaded
+tool, so that the tree works as the main checkout does without being set up
+again. Each copy is the tree's own, never hardlinked and never given back, and
+burning the tree deletes it. Left behind: untracked files git doesn't ignore,
+which are work in progress; the caches a repo declares, which are grafted
+instead, and paths declared `never`; what the tree's own branch doesn't ignore;
+what lies outside a sparse tree's directories; Python venvs and CMake build
+directories, which name the path they were made at; Gradle's `.gradle` and the
+`build` directory beside a Gradle build script, which Gradle reruns without
+`.gradle`'s task history; and git worktrees or submodule checkouts, whose copies
+would share git state. Each
+copy and each path left out gets a `copy` line in the output. A copy never
+replaces anything: `workforest cache graft` copies in what a tree lacks, even
+into trees planted before 0.19.0, and leaves alone what it has.
+
 ## Build caches
 
 `new` and `plant` graft each repo's build cache into the tree from the repo's
@@ -197,7 +218,7 @@ build    clone   *.lock,state/*
 | mode | meaning |
 | --- | --- |
 | `clone` | the seed's directory, files of 64 KiB and up hardlinked, smaller ones copied — the default |
-| `never` | left cold |
+| `never` | left cold, and not copied either |
 
 Cargo's `target/` needs no entry: a repo with a root `Cargo.toml` grafts it,
 always copying Cargo's lock files, fingerprints, dep-info, build-script results
@@ -205,7 +226,9 @@ and docs. Dependencies stay warm; the workspace's own crates rebuild once. Most
 other ecosystems need no entry either. Go keeps its build cache outside the
 repo, where every worktree already shares it. uv, npm and pnpm keep global
 caches of downloaded packages, so a tree's install is fast, but its
-`node_modules` or `.venv` is its own: never graft those.
+`node_modules` or `.venv` is its own: never graft those. A tree gets a copy of
+the main checkout's `node_modules` instead (see "Ignored files"), but no
+`.venv`, which has to be made in the tree.
 
 The size split is a bet, not a guarantee. Build tools replace large artifacts
 wholesale, so sharing them is free; the files they rewrite in place
@@ -356,6 +379,9 @@ finished, fetch and `burn` it as above.
   passed, so a burned forest can be started again on the same branch names.
 - Build caches are grafted automatically. Use `--no-cache` only when a
   deliberately cold build is the point.
+- Ignored files are copied in automatically, so a tree has the main
+  checkout's `.env` and `node_modules` from the start. Use `--clean` only when
+  a tree with nothing but git's checkout is the point, as to reproduce CI.
 - Never add a `clone` entry for a new kind of cache on the strength of it
   looking path-independent. Run `workforest cache doctor` and let it fail: a
   missing entry costs build time, a wrong one costs a correct build.
