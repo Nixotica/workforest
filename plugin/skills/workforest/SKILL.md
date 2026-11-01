@@ -193,9 +193,11 @@ again. Each copy is the tree's own, never hardlinked and never given back, and
 burning the tree deletes it. Left behind: untracked files git doesn't ignore,
 which are work in progress; the caches a repo declares, which are grafted
 instead, and paths declared `never`; what the tree's own branch doesn't ignore;
-what lies outside a sparse tree's directories; Python venvs, CMake build
-directories and Gradle's `.gradle`, which name the path they were made at; and
-git worktrees or submodule checkouts, whose copies would share git state. Each
+what lies outside a sparse tree's directories; Python venvs and CMake build
+directories, which name the path they were made at; Gradle's `.gradle` and the
+`build` directory beside a Gradle build script, which Gradle reruns without
+`.gradle`'s task history; and git worktrees or submodule checkouts, whose copies
+would share git state. Each
 copy and each path left out gets a `copy` line in the output. A copy never
 replaces anything: `workforest cache graft` copies in what a tree lacks, even
 into trees planted before 0.19.0, and leaves alone what it has.

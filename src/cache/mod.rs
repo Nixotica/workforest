@@ -22,12 +22,16 @@
 
 mod cargo;
 mod clone;
+mod cmake;
 mod copy;
 pub mod declare;
 pub mod doctor;
 mod donate;
 mod ecosystem;
 mod glob;
+mod gradle;
+mod left_out;
+mod python;
 pub mod seed;
 mod walk;
 

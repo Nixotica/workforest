@@ -277,10 +277,18 @@ These stay behind:
 - what lies outside a sparse tree's directories, though its top level is
   copied;
 - what the tree's own branch doesn't ignore, which would show up in its status;
-- what names the path it was made at, where a copy would install or build into
-  the main checkout: Python venvs, CMake build directories and Gradle's
-  `.gradle`. Make those afresh in the tree;
-- a git worktree or submodule checkout, whose copy would share its git state.
+- what a build system or tool makes that doesn't work at another path, or is
+  worth nothing there, recognised per ecosystem wherever it sits in the repo,
+  as Cargo's `target` is grafted without a declaration:
+  - Python venvs and CMake build directories, which name the path they were
+    made at, so a copy would install or build into the main checkout. Make
+    those afresh in the tree;
+  - Gradle's `.gradle`, and the `build` directory beside a Gradle build
+    script, which Gradle reruns without `.gradle`'s task history anyway. With
+    `org.gradle.caching`, a tree's first build is served from the build cache
+    in Gradle's user home instead;
+  - a git worktree or submodule checkout, whose copy would share its git
+    state.
 
 A copy never replaces anything. `cache graft` copies in what a tree lacks, as
 for one planted before this or before its main checkout had it, and leaves

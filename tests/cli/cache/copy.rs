@@ -408,3 +408,39 @@ fn an_ignored_directory_with_nothing_left_to_copy_stays_behind() {
     assert!(!tree.join("py").exists());
     assert!(!tree.join(".py.workforest-copy").exists());
 }
+
+#[test]
+fn a_gradle_projects_build_directory_is_left_out_and_any_other_copied() {
+    let sb = Sandbox::new();
+    let repo = sb.ignoring("api", "build/\n.gradle/\n");
+    fs::create_dir_all(repo.join("android/app")).unwrap();
+    sb.publish(&repo, "android/settings.gradle.kts", "include(\":app\")\n");
+    sb.publish(&repo, "android/app/build.gradle.kts", "plugins {}\n");
+    put(&repo.join("android/app/build/outputs/app.apk"), "apk\n");
+    put(
+        &repo.join("android/build/reports/problems.html"),
+        "<html/>\n",
+    );
+    put(
+        &repo.join("android/.gradle/8.14/executionHistory.bin"),
+        "history\n",
+    );
+    put(&repo.join("docs/build/index.html"), "<html/>\n");
+
+    let out = sb.ok(&sb.root, &["new", "gradle", "repos/api"]);
+    let reuse = "left out, since Gradle can't reuse it without the task history in .gradle\n";
+    for line in [
+        format!("  copy android/app/build: {reuse}"),
+        format!("  copy android/build: {reuse}"),
+        "  copy android/.gradle: left out, since Gradle's .gradle doesn't work at another path\n"
+            .to_owned(),
+        "  copy docs/build: 1 file, 8 B\n".to_owned(),
+    ] {
+        assert!(out.contains(&line), "{out}");
+    }
+    let tree = sb.forest("gradle").join("api");
+    for gone in ["android/app/build", "android/build", "android/.gradle"] {
+        assert!(!tree.join(gone).exists(), "{gone}");
+    }
+    assert_eq!(read(&tree.join("docs/build/index.html")), "<html/>\n");
+}

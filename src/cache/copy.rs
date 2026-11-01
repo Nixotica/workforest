@@ -10,8 +10,8 @@
 //! - what lies outside a sparse tree's directories;
 //! - what the tree's own branch doesn't ignore, which would show up in its
 //!   status as untracked;
-//! - what names the path it was made at, where a copy would install or build
-//!   into the main checkout, or share its git state;
+//! - what a build system or tool made that doesn't work, or is worth nothing,
+//!   at another path (see [`super::left_out`]);
 //! - what the tree has something at already: a copy never replaces anything.
 
 use std::cell::RefCell;
@@ -21,7 +21,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use super::{Planting, clone, count, declared, human_bytes, mark_older_changed};
+use super::{Planting, clone, count, declared, human_bytes, left_out, mark_older_changed};
 use crate::error::{Context, Result, bail};
 use crate::git;
 
@@ -69,7 +69,7 @@ pub fn copy_tree(planting: &Planting) {
         if outside || caches.iter().any(|cache| rel.starts_with(cache)) {
             continue;
         }
-        if let Some((at, why)) = unmovable_around(source, &rel, dir) {
+        if let Some((at, why)) = left_out_around(source, &rel, dir) {
             left_out.insert(at, why.to_owned());
             continue;
         }
@@ -137,8 +137,8 @@ pub fn copy_tree(planting: &Planting) {
 }
 
 /// Copy `rel` from the main checkout at `source` to its staging path in
-/// `tree`, leaving out the caches and unmovable directories inside it, which
-/// it notes in `left_out`. Nothing for a socket, a FIFO or a device.
+/// `tree`, leaving out the caches inside it and what [`left_out`] says to,
+/// which it notes in `left_out`. Nothing for a socket, a FIFO or a device.
 fn stage(
     tree: &Path,
     source: &Path,
@@ -165,7 +165,7 @@ fn stage(
             if caches.contains(&rel) {
                 return true;
             }
-            let why = unmovable(&source.join(&rel));
+            let why = left_out::why(&source.join(&rel));
             if let Some(why) = why {
                 inside.borrow_mut().push((rel, why));
             }
@@ -210,29 +210,9 @@ fn stage(
     }))
 }
 
-/// Why the directory at `dir` doesn't work anywhere else, if it doesn't: it
-/// names the path it was made at, so a copy would install or build into the
-/// original.
-fn unmovable(dir: &Path) -> Option<&'static str> {
-    if dir.join("pyvenv.cfg").is_file() {
-        return Some("a Python venv names the path it was made at");
-    }
-    if dir.join("CMakeCache.txt").is_file() {
-        return Some("a CMake build directory names the source it was configured for");
-    }
-    if dir.file_name().is_some_and(|name| name == ".gradle") {
-        return Some("Gradle's .gradle doesn't work at another path");
-    }
-    // A `.git` file, rather than a directory, names git state kept elsewhere.
-    if dir.join(".git").is_file() {
-        return Some("a git worktree or submodule names the repository it belongs to");
-    }
-    None
-}
-
-/// The unmovable directory of the main checkout at `source` that `rel`, a
-/// directory if `dir`, is or is in, with why it is unmovable.
-fn unmovable_around(source: &Path, rel: &Path, dir: bool) -> Option<(PathBuf, &'static str)> {
+/// The directory of the main checkout at `source` that `rel`, a directory if
+/// `dir`, is or is in and that a copy leaves out, with why.
+fn left_out_around(source: &Path, rel: &Path, dir: bool) -> Option<(PathBuf, &'static str)> {
     let mut at = PathBuf::new();
     let parts: Vec<_> = rel.components().collect();
     for (n, part) in parts.iter().enumerate() {
@@ -240,7 +220,7 @@ fn unmovable_around(source: &Path, rel: &Path, dir: bool) -> Option<(PathBuf, &'
         if n + 1 == parts.len() && !dir {
             break;
         }
-        if let Some(why) = unmovable(&source.join(&at)) {
+        if let Some(why) = left_out::why(&source.join(&at)) {
             return Some((at, why));
         }
     }
