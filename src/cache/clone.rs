@@ -29,7 +29,7 @@ use std::thread;
 use std::time::SystemTime;
 
 use super::glob::Glob;
-use super::walk::walk;
+use super::walk::{walk, walk_skipping};
 
 /// What a clone cost.
 #[derive(Default)]
@@ -59,6 +59,19 @@ pub fn clone_dir(
     main: &Path,
     link_min: u64,
     always_copy: &[String],
+) -> io::Result<Cloned> {
+    clone_dir_skipping(src, dst, main, link_min, always_copy, None)
+}
+
+/// As [`clone_dir`], but a directory that `skip` takes, by its path relative
+/// to `src`, is left out along with everything in it.
+pub fn clone_dir_skipping(
+    src: &Path,
+    dst: &Path,
+    main: &Path,
+    link_min: u64,
+    always_copy: &[String],
+    skip: Option<&dyn Fn(&Path) -> bool>,
 ) -> io::Result<Cloned> {
     let always_copy: Vec<Glob> = always_copy.iter().map(|glob| Glob::new(glob)).collect();
     fs::create_dir(dst)?;
@@ -93,7 +106,7 @@ pub fn clone_dir(
             })
             .collect();
         let walked = (|| {
-            for item in walk(src) {
+            for item in walk_skipping(src, skip) {
                 let (rel, meta) = item?;
                 if failed.load(Ordering::Relaxed) {
                     break;
@@ -175,7 +188,7 @@ impl Cloned {
 }
 
 /// Copy `from`, whose metadata is `meta`, to `to`, keeping its times.
-fn copy_file(from: &Path, to: &Path, meta: &Metadata) -> io::Result<()> {
+pub(super) fn copy_file(from: &Path, to: &Path, meta: &Metadata) -> io::Result<()> {
     fs::copy(from, to)?;
     let times = FileTimes::new()
         .set_accessed(meta.accessed()?)

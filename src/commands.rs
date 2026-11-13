@@ -76,7 +76,7 @@ pub fn run(cli: Cli) -> Result<()> {
 fn new(config: &Config, args: NewArgs) -> Result<()> {
     let sources = main_worktrees(config, &args.repos)?;
     check_sparse(&args.sparse.sparse)?;
-    let graft = grafting(config, &args.caching)?;
+    let furnishing = furnishing(config, &args.caching)?;
     let forest = Forest::create(config, &args.forest)?;
     println!("new forest {} at {}", forest.name, forest.dir.display());
     if sources.is_empty() {
@@ -88,7 +88,7 @@ fn new(config: &Config, args: NewArgs) -> Result<()> {
         sources,
         args.branching,
         &args.sparse.sparse,
-        graft,
+        furnishing,
     )
 }
 
@@ -96,14 +96,14 @@ fn plant(config: &Config, args: PlantArgs) -> Result<()> {
     let forest = Forest::resolve(config, args.target.forest.as_deref(), NAME_WITH_FLAG)?;
     let sources = main_worktrees(config, &args.repos)?;
     check_sparse(&args.sparse.sparse)?;
-    let graft = grafting(config, &args.caching)?;
+    let furnishing = furnishing(config, &args.caching)?;
     plant_sources(
         config,
         &forest,
         sources,
         args.branching,
         &args.sparse.sparse,
-        graft,
+        furnishing,
     )
 }
 
@@ -121,13 +121,30 @@ fn check_sparse(dirs: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The size from which grafted cache files are hardlinked, or `None` if
-/// `--no-cache` says not to graft.
-fn grafting(config: &Config, caching: &Caching) -> Result<Option<u64>> {
-    if caching.no_cache {
-        return Ok(None);
+/// What planting gives each tree beyond what git checks out.
+#[derive(Clone, Copy)]
+struct Furnishing {
+    /// Whether to copy what git ignores in the main checkout.
+    copy: bool,
+    /// The size from which grafted cache files are hardlinked, or `None` not
+    /// to graft them.
+    graft: Option<u64>,
+}
+
+/// What `--clean` and `--no-cache` leave planting to give each tree.
+fn furnishing(config: &Config, caching: &Caching) -> Result<Furnishing> {
+    if caching.clean {
+        return Ok(Furnishing {
+            copy: false,
+            graft: None,
+        });
     }
-    Ok(Some(config.link_min()?.value))
+    let graft = if caching.no_cache {
+        None
+    } else {
+        Some(config.link_min()?.value)
+    };
+    Ok(Furnishing { copy: true, graft })
 }
 
 /// The main worktree of each repo argument, all checked before anything changes.
@@ -141,16 +158,17 @@ fn main_worktree(config: &Config, arg: &str) -> Result<PathBuf> {
 }
 
 /// Add a worktree of each repo to `forest`, all on the same branch: the one
-/// `branching` names, else the forest's name after the branch prefix. Unless
-/// `graft` is `None`, graft the build caches each repo declares from its seed,
-/// hardlinking files of that many bytes and up.
+/// `branching` names, else the forest's name after the branch prefix. Then
+/// give each tree what `furnishing` says: copies of what git ignores in its
+/// main checkout, and the build caches its repo declares, grafted from its
+/// seed.
 fn plant_sources(
     config: &Config,
     forest: &Forest,
     sources: Vec<PathBuf>,
     branching: Branching,
     sparse: &[String],
-    graft: Option<u64>,
+    furnishing: Furnishing,
 ) -> Result<()> {
     let branch = match branching.branch {
         Some(branch) => branch,
@@ -182,8 +200,14 @@ fn plant_sources(
             "planted {repo} -> {} (branch {branch}, off {base}{only})",
             dir.display()
         );
-        if let Some(link_min) = graft {
-            cache::graft_tree(&planting(config, forest, &repo, &source), link_min, false);
+        let planting = planting(config, forest, &repo, &source);
+        // Copies first, so that a cache declared inside an ignored directory
+        // is left out of its copy and grafted into it.
+        if furnishing.copy {
+            cache::copy_tree(&planting);
+        }
+        if let Some(link_min) = furnishing.graft {
+            cache::graft_tree(&planting, link_min, false);
         }
     }
     Ok(())
@@ -882,6 +906,7 @@ fn cache_graft(config: &Config, args: CacheGraftArgs) -> Result<()> {
         }
         println!("{}", tree.repo);
         let planting = planting(config, &forest, &tree.repo, &tree.source);
+        cache::copy_tree(&planting);
         cache::graft_tree(&planting, link_min, args.force);
     }
     Ok(())

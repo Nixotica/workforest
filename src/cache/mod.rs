@@ -13,17 +13,25 @@
 //! back to it (see [`donate`]), so that trees planted later graft a warm one.
 //! The main checkout's caches are only ever read.
 //!
+//! Everything else the main checkout ignores is copied into a new tree, as the
+//! tree's own, and never given back (see [`copy`]).
+//!
 //! workforest only ever replaces or deletes a tree's cache path that git
 //! ignores and tracks nothing under, so a mistaken declaration can't destroy
 //! source.
 
 mod cargo;
 mod clone;
+mod cmake;
+mod copy;
 pub mod declare;
 pub mod doctor;
 mod donate;
 mod ecosystem;
 mod glob;
+mod gradle;
+mod left_out;
+mod python;
 pub mod seed;
 mod walk;
 
@@ -33,6 +41,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 pub use clone::usage;
+pub use copy::copy_tree;
 pub use declare::declared;
 pub use donate::{Say, Transfer, donate_tree};
 use seed::{Record, Seed};
@@ -259,11 +268,12 @@ fn graft_clone(
             // planted just now is newer than anything grafted into it, but
             // one planted or edited before the cache's last build is not.
             let marked = match cloned.newest {
-                Some(newest) => mark_older_changed(tree, newest, &staging).map_err(|err| {
-                    Error::new(format!(
-                        "{err}; dropped the graft, so that its output can't pass as fresh"
-                    ))
-                })?,
+                Some(newest) => mark_older_changed(tree, newest, &[PathBuf::from(&staging)])
+                    .map_err(|err| {
+                        Error::new(format!(
+                            "{err}; dropped the graft, so that its output can't pass as fresh"
+                        ))
+                    })?,
                 None => 0,
             };
             if dst.symlink_metadata().is_ok() {
@@ -302,16 +312,16 @@ fn graft_clone(
 /// returning how many. Build tools take output newer than its sources for
 /// built from them, so output grafted from a build that came after the tree's
 /// checkout or edits would otherwise pass as fresh, though built from another
-/// checkout's sources. What is under `staged`, the graft on its way into
-/// place, is left alone: its files are hardlinked to other copies.
-fn mark_older_changed(tree: &Path, newest: SystemTime, staged: &str) -> Result<u64> {
+/// checkout's sources. What is under `staged`, grafts or copies on their way
+/// into place, is left alone: a graft's files are hardlinked to other copies.
+fn mark_older_changed(tree: &Path, newest: SystemTime, staged: &[PathBuf]) -> Result<u64> {
     let Some(files) = git::files(tree) else {
         bail!("could not list the files of {}", tree.display());
     };
     let now = FileTimes::new().set_modified(SystemTime::now());
     let mut marked = 0;
     for file in files {
-        if file.starts_with(staged) {
+        if staged.iter().any(|staged| file.starts_with(staged)) {
             continue;
         }
         let path = tree.join(file);
